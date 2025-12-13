@@ -709,7 +709,10 @@ def execute_campaign_step(
                 )
                 campaign = result.scalar_one_or_none()
                 if campaign and campaign.plan:
-                    plan = campaign.plan
+                    import copy
+                    from sqlalchemy.orm.attributes import flag_modified
+                    
+                    plan = copy.deepcopy(campaign.plan)
                     for i, step in enumerate(plan.get("steps", [])):
                         if step.get("id") == step_id:
                             plan["steps"][i]["status"] = "failed"
@@ -719,6 +722,7 @@ def execute_campaign_step(
                             }
                             break
                     campaign.plan = plan
+                    flag_modified(campaign, "plan")
                     db.commit()
             finally:
                 db.close()
