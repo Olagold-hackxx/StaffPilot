@@ -339,73 +339,77 @@ async def approve_campaign(
                         logger.error(f"Google Ads service initialization error: {e}", exc_info=True)
                         continue
                     
-                    # Create campaign
-                    campaign_result = await google_service.create_campaign(
+                    # Create Performance Max campaign with assets
+                    headlines = ad_copy.get("headlines", [])
+                    descriptions = ad_copy.get("descriptions", [])
+                    
+                    # Determine final URL - check multiple sources
+                    logger.info(f"DEBUG: Resolving URL. ad_copy keys: {ad_copy.keys()}")
+                    final_url_val = (
+                        ad_copy.get("final_url") or 
+                        ad_copy.get("link_url") or 
+                        plan.get("landing_page_url") or 
+                        plan.get("website_url") or
+                        website_url
+                    )
+                    
+                    if not final_url_val:
+                        errors.append(f"Google Ads: No landing page URL found. Please set a website URL in settings or in the ad plan.")
+                        continue
+                    
+                    # Collect image URLs from campaign assets
+                    image_urls = []
+                    video_urls = []
+                    
+                    # Query for generated assets from campaign plan steps
+                    for step in plan.get("steps", []):
+                        step_result = step.get("result", {})
+                        if step_result:
+                            if step_result.get("image_urls"):
+                                image_urls.extend(step_result.get("image_urls", []))
+                            if step_result.get("video_urls"):
+                                video_urls.extend(step_result.get("video_urls", []))
+                    
+                    # Also check for assets stored at plan level
+                    if plan.get("generated_images"):
+                        image_urls.extend(plan.get("generated_images", []))
+                    if plan.get("generated_videos"):
+                        video_urls.extend(plan.get("generated_videos", []))
+                    
+                    logger.info(f"Google Ads Performance Max - Images: {len(image_urls)}, Videos: {len(video_urls)}")
+                    
+                    campaign_result = await google_service.create_performance_max_campaign(
                         name=campaign.name,
                         budget_amount=float(campaign.budget_allocation.get(channel, 0)),
                         start_date=campaign.start_date,
-                        end_date=campaign.end_date
+                        end_date=campaign.end_date,
+                        final_url=final_url_val,
+                        headlines=headlines[:15] if headlines else None,
+                        descriptions=descriptions[:4] if descriptions else None,
+                        image_urls=image_urls[:20] if image_urls else None,
+                        video_urls=video_urls[:5] if video_urls else None
                     )
                     
                     if campaign_result.get("success"):
                         google_campaign_id = campaign_result.get("campaign_id")
                         
-                        # Create ad group
-                        ad_group_result = await google_service.create_ad_group(
-                            campaign_id=google_campaign_id,
-                            name=f"{campaign.name} Ad Group"
+                        # Create campaign asset record
+                        asset = CampaignAsset(
+                            campaign_id=campaign.id,
+                            asset_type="ad",
+                            platform="google_ads",
+                            platform_asset_id=google_campaign_id,
+                            status="paused",
+                            meta_data={
+                                "campaign_id": google_campaign_id,
+                                "campaign_type": "PERFORMANCE_MAX",
+                                "assets_created": campaign_result.get("assets_created", {})
+                            }
                         )
-                        
-                        if ad_group_result.get("success"):
-                            ad_group_id = ad_group_result.get("ad_group_id")
-                            
-                            # Create ad
-                            headlines = ad_copy.get("headlines", [])
-                            descriptions = ad_copy.get("descriptions", [])
-                            
-                            # Determine final URL - check multiple sources
-                            logger.info(f"DEBUG: Resolving URL. ad_copy keys: {ad_copy.keys()}")
-                            logger.info(f"DEBUG: ad_copy.final_url: {ad_copy.get('final_url')}")
-                            logger.info(f"DEBUG: ad_copy.link_url: {ad_copy.get('link_url')}")
-                            logger.info(f"DEBUG: plan.landing_page_url: {plan.get('landing_page_url')}")
-                            logger.info(f"DEBUG: plan.website_url: {plan.get('website_url')}")
-                            logger.info(f"DEBUG: tenant.website_url: {website_url}")
-                            
-                            final_url_val = (
-                                ad_copy.get("final_url") or 
-                                ad_copy.get("link_url") or 
-                                plan.get("landing_page_url") or 
-                                plan.get("website_url") or
-                                website_url
-                            )
-                            
-                            if not final_url_val:
-                                errors.append(f"Google Ads: No landing page URL found. Please set a website URL in settings or in the ad plan.")
-                                continue
-                                
-                            ad_result = await google_service.create_ad(
-                                ad_group_id=ad_group_id,
-                                headlines=headlines[:15] if headlines else ["Discover Our Services", "Best Solutions", "Get Started Today"],
-                                descriptions=descriptions[:4] if descriptions else ["Transform your business", "See results today"],
-                                final_url=final_url_val
-                            )
-                            
-                            if ad_result.get("success"):
-                                # Create campaign asset record
-                                asset = CampaignAsset(
-                                    campaign_id=campaign.id,
-                                    asset_type="ad",
-                                    platform="google_ads",
-                                    platform_asset_id=ad_result.get("ad_id"),
-                                    status="active",
-                                    meta_data={
-                                        "campaign_id": google_campaign_id,
-                                        "ad_group_id": ad_group_id,
-                                        "ad_id": ad_result.get("ad_id")
-                                    }
-                                )
-                                db.add(asset)
-                                created_assets.append(f"Google Ads: {ad_result.get('ad_id')}")
+                        db.add(asset)
+                        created_assets.append(f"Google Ads Performance Max: {google_campaign_id}")
+                    else:
+                        errors.append(f"Google Ads: {campaign_result.get('error', 'Unknown error')}")
                 
                 elif channel == "meta_ads":
                     # Create Meta Ads campaign

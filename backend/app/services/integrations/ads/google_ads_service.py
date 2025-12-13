@@ -1,20 +1,21 @@
 """
-Google Ads Campaign Service
+Google Ads Campaign Service - Performance Max Campaigns
 """
 import asyncio
+import base64
+import requests
 from typing import Dict, Any, Optional, List
 from datetime import datetime, date
 from decimal import Decimal, InvalidOperation
 from app.config import settings
 from app.utils.logger import logger
-from app.utils.google_ads import get_customer_ids
 
 
 GOOGLE_ADS_LIBRARY_ERROR = "google-ads library not installed. Install with: pip install google-ads"
 
 
 class GoogleAdsCampaignService:
-    """Service for creating and managing Google Ads campaigns"""
+    """Service for creating and managing Google Ads Performance Max campaigns"""
     
     def __init__(self, refresh_token: str, login_customer_id: str, client_id: Optional[str] = None):
         """
@@ -27,80 +28,48 @@ class GoogleAdsCampaignService:
                       If None, uses login_customer_id
         """
         self.refresh_token = refresh_token
-        # Validate and format login_customer_id (manager account) - must be exactly 10 digits
         self.login_customer_id = self._validate_customer_id(login_customer_id, "login_customer_id")
-        # Validate and format client_id (target account) - must be exactly 10 digits
-        # If not provided, use login_customer_id
         self.client_id = self._validate_customer_id(client_id or login_customer_id, "client_id")
     
     def _validate_customer_id(self, customer_id: Optional[str], field_name: str = "customer_id") -> str:
-        """
-        Validate that customer_id is exactly 10 digits as a string.
-        Customer IDs should already be in the correct format as fetched from Google Ads API.
-        
-        Args:
-            customer_id: Customer ID from integration (should be 10 digits)
-            field_name: Name of the field for error messages
-        
-        Returns:
-            Validated 10-digit customer ID as string
-        
-        Raises:
-            ValueError: If customer_id cannot be validated
-        """
+        """Validate that customer_id is exactly 10 digits as a string."""
         if not customer_id:
             raise ValueError(f"Google Ads {field_name} is required but not provided")
         
-        # Convert to string and strip whitespace
         customer_id_str = str(customer_id).strip()
         
-        # If it's a resource name like "customers/1234567890", extract the ID
         if "/" in customer_id_str:
             customer_id_str = customer_id_str.split("/")[-1]
         
-        # Check if it's exactly 10 digits (allowing only digits)
         if customer_id_str.isdigit() and len(customer_id_str) == 10:
             return customer_id_str
         
-        # If not valid, provide clear error message
         digits_only = ''.join(filter(str.isdigit, customer_id_str))
         raise ValueError(
             f"Google Ads {field_name} must be exactly 10 digits. "
             f"Got: {customer_id} ({len(digits_only)} digits: {digits_only}). "
-            f"Please reconnect your Google Ads account to ensure customer IDs are stored correctly."
+            f"Please reconnect your Google Ads account."
         )
     
     def _get_client(self):
-        """Get Google Ads client using login_customer_id for authentication"""
+        """Get Google Ads client"""
         try:
             from google.ads.googleads.client import GoogleAdsClient
             
-            # Debug logging
             developer_token = settings.GOOGLE_ADS_DEVELOPER_TOKEN
             logger.info(f"Google Ads client config - login_customer_id: {self.login_customer_id}, client_id: {self.client_id}")
-            logger.info(f"Developer token length: {len(developer_token) if developer_token else 0}")
-            logger.info(f"Developer token set: {bool(developer_token)}")
+            logger.info(f"Developer token in config: {bool(developer_token)}")
             
-            # login_customer_id must be exactly 10 digits as a string (manager account)
             client_config = {
                 "client_id": settings.GOOGLE_CLIENT_ID,
                 "client_secret": settings.GOOGLE_CLIENT_SECRET,
                 "developer_token": developer_token,
                 "refresh_token": self.refresh_token,
-                "login_customer_id": str(self.login_customer_id),  # Manager account for authentication
+                "login_customer_id": str(self.login_customer_id),
                 "use_proto_plus": True,
             }
             
-            logger.info(f"Client config keys: {list(client_config.keys())}")
-            logger.info(f"Developer token in config: {bool(client_config.get('developer_token'))}")
-            
-            client = GoogleAdsClient.load_from_dict(client_config)
-            
-            # Log API version if available
-            if hasattr(client, 'get_api_version'):
-                logger.info(f"Google Ads API version: {client.get_api_version()}")
-            
-            return client
+            return GoogleAdsClient.load_from_dict(client_config)
         except ImportError:
             logger.error(GOOGLE_ADS_LIBRARY_ERROR)
             raise ImportError(GOOGLE_ADS_LIBRARY_ERROR)
@@ -108,6 +77,329 @@ class GoogleAdsCampaignService:
             logger.error(f"Error creating Google Ads client: {e}")
             raise
     
+    async def create_performance_max_campaign(
+        self,
+        name: str,
+        budget_amount: float,
+        start_date: date,
+        end_date: Optional[date] = None,
+        final_url: str = "",
+        headlines: List[str] = None,
+        descriptions: List[str] = None,
+        image_urls: List[str] = None,
+        video_urls: List[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Create a Performance Max campaign with assets.
+        
+        Performance Max campaigns use Google's AI to automatically combine
+        text, images, and videos into optimized ads across all Google properties.
+        """
+        try:
+            def _create_pmax_sync():
+                logger.info(f"Creating Performance Max campaign: {name}")
+                logger.info(f"Assets - Headlines: {len(headlines or [])}, Descriptions: {len(descriptions or [])}, Images: {len(image_urls or [])}, Videos: {len(video_urls or [])}")
+                
+                client = self._get_client()
+                
+                # Generate temporary IDs for resources
+                temp_id_counter = -1
+                
+                def get_next_temp_id():
+                    nonlocal temp_id_counter
+                    temp_id_counter -= 1
+                    return temp_id_counter + 1
+                
+                budget_temp_id = get_next_temp_id()
+                campaign_temp_id = get_next_temp_id()
+                asset_group_temp_id = get_next_temp_id()
+                
+                operations = []
+                
+                # === 1. CREATE BUDGET ===
+                budget_operation = client.get_type("MutateOperation")
+                budget = budget_operation.campaign_budget_operation.create
+                budget.resource_name = client.get_service("CampaignBudgetService").campaign_budget_path(
+                    self.client_id, budget_temp_id
+                )
+                budget.name = f"{name} Budget {datetime.now().timestamp()}"
+                
+                try:
+                    budget_decimal = Decimal(str(budget_amount))
+                    budget.amount_micros = int(budget_decimal * Decimal(1_000_000))
+                except (InvalidOperation, ValueError, TypeError):
+                    return {"success": False, "error": "Invalid budget amount"}
+                
+                budget.delivery_method = client.enums.BudgetDeliveryMethodEnum.STANDARD
+                budget.explicitly_shared = False
+                operations.append(budget_operation)
+                
+                # === 2. CREATE PERFORMANCE MAX CAMPAIGN ===
+                campaign_operation = client.get_type("MutateOperation")
+                campaign = campaign_operation.campaign_operation.create
+                campaign.resource_name = client.get_service("CampaignService").campaign_path(
+                    self.client_id, campaign_temp_id
+                )
+                campaign.name = name
+                campaign.status = client.enums.CampaignStatusEnum.PAUSED
+                campaign.advertising_channel_type = client.enums.AdvertisingChannelTypeEnum.PERFORMANCE_MAX
+                campaign.campaign_budget = client.get_service("CampaignBudgetService").campaign_budget_path(
+                    self.client_id, budget_temp_id
+                )
+                
+                # Performance Max uses maximize conversions by default
+                campaign.maximize_conversions = client.get_type("MaximizeConversions")
+                
+                campaign.start_date = start_date.strftime("%Y%m%d")
+                if end_date:
+                    campaign.end_date = end_date.strftime("%Y%m%d")
+                
+                # URL expansion for Performance Max
+                campaign.url_expansion_opt_out = False
+                
+                operations.append(campaign_operation)
+                
+                # === 3. CREATE ASSET GROUP ===
+                asset_group_operation = client.get_type("MutateOperation")
+                asset_group = asset_group_operation.asset_group_operation.create
+                asset_group.resource_name = client.get_service("AssetGroupService").asset_group_path(
+                    self.client_id, asset_group_temp_id
+                )
+                asset_group.campaign = client.get_service("CampaignService").campaign_path(
+                    self.client_id, campaign_temp_id
+                )
+                asset_group.name = f"{name} Asset Group"
+                asset_group.status = client.enums.AssetGroupStatusEnum.PAUSED
+                
+                # Set final URL for the asset group
+                if final_url:
+                    asset_group.final_urls.append(final_url)
+                
+                operations.append(asset_group_operation)
+                
+                # === 4. CREATE TEXT ASSETS AND LINK TO ASSET GROUP ===
+                asset_temp_ids = {}
+                
+                # Headlines (need at least 3, max 15 for PMax)
+                headlines_list = (headlines or [])[:15]
+                if len(headlines_list) < 3:
+                    headlines_list.extend(["Discover More", "Get Started", "Learn More"][:3 - len(headlines_list)])
+                
+                for i, headline_text in enumerate(headlines_list):
+                    asset_temp_id = get_next_temp_id()
+                    asset_temp_ids[f"headline_{i}"] = asset_temp_id
+                    
+                    # Create the asset
+                    asset_op = client.get_type("MutateOperation")
+                    asset = asset_op.asset_operation.create
+                    asset.resource_name = client.get_service("AssetService").asset_path(
+                        self.client_id, asset_temp_id
+                    )
+                    asset.text_asset.text = headline_text[:30]  # Max 30 chars
+                    operations.append(asset_op)
+                    
+                    # Link asset to asset group
+                    link_op = client.get_type("MutateOperation")
+                    link = link_op.asset_group_asset_operation.create
+                    link.asset = client.get_service("AssetService").asset_path(
+                        self.client_id, asset_temp_id
+                    )
+                    link.asset_group = client.get_service("AssetGroupService").asset_group_path(
+                        self.client_id, asset_group_temp_id
+                    )
+                    link.field_type = client.enums.AssetFieldTypeEnum.HEADLINE
+                    operations.append(link_op)
+                
+                # Long Headlines (at least 1 required for PMax)
+                long_headline_text = (headlines_list[0] if headlines_list else "Discover Our Services")[:90]
+                long_headline_temp_id = get_next_temp_id()
+                
+                lh_asset_op = client.get_type("MutateOperation")
+                lh_asset = lh_asset_op.asset_operation.create
+                lh_asset.resource_name = client.get_service("AssetService").asset_path(
+                    self.client_id, long_headline_temp_id
+                )
+                lh_asset.text_asset.text = long_headline_text
+                operations.append(lh_asset_op)
+                
+                lh_link_op = client.get_type("MutateOperation")
+                lh_link = lh_link_op.asset_group_asset_operation.create
+                lh_link.asset = client.get_service("AssetService").asset_path(
+                    self.client_id, long_headline_temp_id
+                )
+                lh_link.asset_group = client.get_service("AssetGroupService").asset_group_path(
+                    self.client_id, asset_group_temp_id
+                )
+                lh_link.field_type = client.enums.AssetFieldTypeEnum.LONG_HEADLINE
+                operations.append(lh_link_op)
+                
+                # Descriptions (need at least 2, max 4)
+                descriptions_list = (descriptions or [])[:4]
+                if len(descriptions_list) < 2:
+                    descriptions_list.extend(["Transform your business today.", "See results that matter."][:2 - len(descriptions_list)])
+                
+                for i, desc_text in enumerate(descriptions_list):
+                    asset_temp_id = get_next_temp_id()
+                    
+                    asset_op = client.get_type("MutateOperation")
+                    asset = asset_op.asset_operation.create
+                    asset.resource_name = client.get_service("AssetService").asset_path(
+                        self.client_id, asset_temp_id
+                    )
+                    asset.text_asset.text = desc_text[:90]  # Max 90 chars
+                    operations.append(asset_op)
+                    
+                    link_op = client.get_type("MutateOperation")
+                    link = link_op.asset_group_asset_operation.create
+                    link.asset = client.get_service("AssetService").asset_path(
+                        self.client_id, asset_temp_id
+                    )
+                    link.asset_group = client.get_service("AssetGroupService").asset_group_path(
+                        self.client_id, asset_group_temp_id
+                    )
+                    link.field_type = client.enums.AssetFieldTypeEnum.DESCRIPTION
+                    operations.append(link_op)
+                
+                # Business Name (required for PMax)
+                business_name_temp_id = get_next_temp_id()
+                bn_asset_op = client.get_type("MutateOperation")
+                bn_asset = bn_asset_op.asset_operation.create
+                bn_asset.resource_name = client.get_service("AssetService").asset_path(
+                    self.client_id, business_name_temp_id
+                )
+                bn_asset.text_asset.text = name[:25]  # Use campaign name as business name
+                operations.append(bn_asset_op)
+                
+                bn_link_op = client.get_type("MutateOperation")
+                bn_link = bn_link_op.asset_group_asset_operation.create
+                bn_link.asset = client.get_service("AssetService").asset_path(
+                    self.client_id, business_name_temp_id
+                )
+                bn_link.asset_group = client.get_service("AssetGroupService").asset_group_path(
+                    self.client_id, asset_group_temp_id
+                )
+                bn_link.field_type = client.enums.AssetFieldTypeEnum.BUSINESS_NAME
+                operations.append(bn_link_op)
+                
+                # === 5. CREATE IMAGE ASSETS ===
+                if image_urls:
+                    for i, img_url in enumerate(image_urls[:20]):  # Max 20 images
+                        try:
+                            # Download and encode image
+                            response = requests.get(img_url, timeout=30)
+                            if response.status_code == 200:
+                                image_data = response.content
+                                
+                                asset_temp_id = get_next_temp_id()
+                                
+                                asset_op = client.get_type("MutateOperation")
+                                asset = asset_op.asset_operation.create
+                                asset.resource_name = client.get_service("AssetService").asset_path(
+                                    self.client_id, asset_temp_id
+                                )
+                                asset.image_asset.data = image_data
+                                asset.name = f"{name} Image {i+1}"
+                                operations.append(asset_op)
+                                
+                                # Link as MARKETING_IMAGE (landscape)
+                                link_op = client.get_type("MutateOperation")
+                                link = link_op.asset_group_asset_operation.create
+                                link.asset = client.get_service("AssetService").asset_path(
+                                    self.client_id, asset_temp_id
+                                )
+                                link.asset_group = client.get_service("AssetGroupService").asset_group_path(
+                                    self.client_id, asset_group_temp_id
+                                )
+                                link.field_type = client.enums.AssetFieldTypeEnum.MARKETING_IMAGE
+                                operations.append(link_op)
+                                
+                                logger.info(f"Added image asset {i+1}/{len(image_urls)}")
+                        except Exception as img_err:
+                            logger.warning(f"Failed to add image {img_url}: {img_err}")
+                            continue
+                
+                # === 6. CREATE VIDEO ASSETS ===
+                # Note: YouTube video IDs are used for Performance Max
+                if video_urls:
+                    for i, video_url in enumerate(video_urls[:5]):  # Max 5 videos
+                        try:
+                            # Extract YouTube video ID if it's a YouTube URL
+                            youtube_id = None
+                            if "youtube.com" in video_url or "youtu.be" in video_url:
+                                if "v=" in video_url:
+                                    youtube_id = video_url.split("v=")[1].split("&")[0]
+                                elif "youtu.be/" in video_url:
+                                    youtube_id = video_url.split("youtu.be/")[1].split("?")[0]
+                            
+                            if youtube_id:
+                                asset_temp_id = get_next_temp_id()
+                                
+                                asset_op = client.get_type("MutateOperation")
+                                asset = asset_op.asset_operation.create
+                                asset.resource_name = client.get_service("AssetService").asset_path(
+                                    self.client_id, asset_temp_id
+                                )
+                                asset.youtube_video_asset.youtube_video_id = youtube_id
+                                asset.name = f"{name} Video {i+1}"
+                                operations.append(asset_op)
+                                
+                                link_op = client.get_type("MutateOperation")
+                                link = link_op.asset_group_asset_operation.create
+                                link.asset = client.get_service("AssetService").asset_path(
+                                    self.client_id, asset_temp_id
+                                )
+                                link.asset_group = client.get_service("AssetGroupService").asset_group_path(
+                                    self.client_id, asset_group_temp_id
+                                )
+                                link.field_type = client.enums.AssetFieldTypeEnum.YOUTUBE_VIDEO
+                                operations.append(link_op)
+                                
+                                logger.info(f"Added YouTube video asset: {youtube_id}")
+                            else:
+                                logger.warning(f"Skipping non-YouTube video: {video_url}")
+                        except Exception as vid_err:
+                            logger.warning(f"Failed to add video {video_url}: {vid_err}")
+                            continue
+                
+                # === EXECUTE ALL OPERATIONS ===
+                logger.info(f"Executing {len(operations)} operations for Performance Max campaign")
+                
+                googleads_service = client.get_service("GoogleAdsService")
+                response = googleads_service.mutate(
+                    customer_id=str(self.client_id),
+                    mutate_operations=operations
+                )
+                
+                # Extract campaign ID from response
+                campaign_id = None
+                for result in response.mutate_operation_responses:
+                    if result.campaign_result.resource_name:
+                        campaign_id = result.campaign_result.resource_name.split("/")[-1]
+                        break
+                
+                logger.info(f"Performance Max campaign created successfully: {campaign_id}")
+                
+                return {
+                    "success": True,
+                    "campaign_id": campaign_id,
+                    "campaign_type": "PERFORMANCE_MAX",
+                    "assets_created": {
+                        "headlines": len(headlines_list),
+                        "descriptions": len(descriptions_list),
+                        "images": len(image_urls or []),
+                        "videos": len(video_urls or [])
+                    }
+                }
+            
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, _create_pmax_sync)
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error creating Performance Max campaign: {e}", exc_info=True)
+            return {"success": False, "error": str(e)}
+    
+    # Keep legacy methods for backward compatibility
     async def create_campaign(
         self,
         name: str,
@@ -115,126 +407,22 @@ class GoogleAdsCampaignService:
         start_date: date,
         end_date: Optional[date] = None
     ) -> Dict[str, Any]:
-        """
-        Create a Google Ads campaign
-        
-        Args:
-            name: Campaign name
-            budget_amount: Daily budget in dollars
-            start_date: Campaign start date
-            end_date: Campaign end date (optional)
-        
-        Returns:
-            Dictionary with campaign_id and success status
-        """
-        try:
-            def _create_campaign_sync():
-                logger.info(f"Creating campaign: name={name}, budget={budget_amount}, start_date={start_date}, end_date={end_date}")
-                logger.info(f"Login customer_id (manager): {self.login_customer_id}, Client ID: {self.client_id}")
-                
-                client = self._get_client()
-                budget_service = client.get_service("CampaignBudgetService")
-                campaign_service = client.get_service("CampaignService")
-                
-                # Create Budget
-                budget_operation = client.get_type("CampaignBudgetOperation")
-                budget = budget_operation.create
-                budget.name = f"{name} Budget {datetime.now().timestamp()}"
-                
-                # Safely coerce budget to micros
-                try:
-                    budget_decimal = Decimal(str(budget_amount))
-                    budget_micros = int(budget_decimal * Decimal(1_000_000))
-                except (InvalidOperation, ValueError, TypeError):
-                    logger.error("Invalid budget amount")
-                    return {"success": False, "error": "Invalid budget amount"}
-                
-                budget.amount_micros = budget_micros
-                budget.delivery_method = client.enums.BudgetDeliveryMethodEnum.STANDARD
-                
-                logger.info(f"Creating budget with customer_id={self.client_id}")
-                budget_response = budget_service.mutate_campaign_budgets(
-                    customer_id=str(self.client_id), operations=[budget_operation]  # Use client_id for campaign creation
-                )
-                logger.info(f"Budget created successfully: {budget_response.results[0].resource_name}")
-                budget_resource_name = budget_response.results[0].resource_name
-                
-                # Create Campaign
-                campaign_operation = client.get_type("CampaignOperation")
-                campaign = campaign_operation.create
-                
-                # Set all required and optional fields
-                campaign.name = name
-                campaign.status = client.enums.CampaignStatusEnum.PAUSED
-                campaign.advertising_channel_type = client.enums.AdvertisingChannelTypeEnum.SEARCH
-                campaign.campaign_budget = budget_resource_name
-                
-                # Set dates
-                campaign.start_date = start_date.strftime("%Y%m%d")
-                if end_date:
-                    campaign.end_date = end_date.strftime("%Y%m%d")
-                
-                # Set bidding strategy - with proto-plus, direct assignment works
-                campaign.manual_cpc = client.get_type("ManualCpc")
-                
-                # Set network settings (optional but recommended)
-                campaign.network_settings.target_google_search = True
-                campaign.network_settings.target_search_network = True
-                campaign.network_settings.target_partner_search_network = False
-                campaign.network_settings.target_content_network = True
-                
-                # CRITICAL: Required field - must use ENUM value, not boolean!
-                campaign.contains_eu_political_advertising = (
-                    client.enums.EuPoliticalAdvertisingStatusEnum.DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING
-                )
-                
-                logger.info(f"Campaign fields set - attempting mutation with customer_id={self.client_id}")
-                
-                campaign_response = campaign_service.mutate_campaigns(
-                    customer_id=str(self.client_id), operations=[campaign_operation]  # Use client_id for campaign creation
-                )
-                logger.info(f"Campaign created successfully: {campaign_response.results[0].resource_name}")
-                resource_name = campaign_response.results[0].resource_name
-                campaign_id = resource_name.split("/")[-1]
-                
-                return {"success": True, "campaign_id": campaign_id, "budget_id": budget_resource_name.split("/")[-1]}
-            
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(None, _create_campaign_sync)
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error creating Google Ads campaign: {e}")
-            return {"success": False, "error": str(e)}
+        """Legacy method - redirects to Performance Max"""
+        return await self.create_performance_max_campaign(
+            name=name,
+            budget_amount=budget_amount,
+            start_date=start_date,
+            end_date=end_date
+        )
     
     async def create_ad_group(
         self,
         campaign_id: str,
         name: str
     ) -> Dict[str, Any]:
-        """Create an ad group"""
-        try:
-            def _create_ad_group_sync():
-                client = self._get_client()
-                service = client.get_service("AdGroupService")
-                operation = client.get_type("AdGroupOperation")
-                ad_group = operation.create
-                ad_group.name = name
-                ad_group.campaign = f"customers/{self.client_id}/campaigns/{campaign_id}"  # Use client_id for campaign creation
-                ad_group.status = client.enums.AdGroupStatusEnum.ENABLED
-                ad_group.type_ = client.enums.AdGroupTypeEnum.SEARCH_STANDARD
-                
-                response = service.mutate_ad_groups(customer_id=str(self.client_id), operations=[operation])  # Use client_id for campaign creation
-                ad_group_id = response.results[0].resource_name.split("/")[-1]
-                return {"success": True, "ad_group_id": ad_group_id}
-            
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(None, _create_ad_group_sync)
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error creating ad group: {e}")
-            return {"success": False, "error": str(e)}
+        """Performance Max doesn't use ad groups - return success for compatibility"""
+        logger.info(f"Performance Max campaigns don't use ad groups - skipping")
+        return {"success": True, "ad_group_id": "pmax_asset_group", "skipped": True}
     
     async def create_ad(
         self,
@@ -243,46 +431,7 @@ class GoogleAdsCampaignService:
         descriptions: List[str],
         final_url: str
     ) -> Dict[str, Any]:
-        """Create a responsive search ad"""
-        try:
-            def _create_ad_sync():
-                client = self._get_client()
-                service = client.get_service("AdGroupAdService")
-                operation = client.get_type("AdGroupAdOperation")
-                ad_group_ad = operation.create
-                ad_group_ad.ad_group = f"customers/{self.client_id}/adGroups/{ad_group_id}"  # Use client_id for campaign creation
-                ad_group_ad.status = client.enums.AdGroupAdStatusEnum.ENABLED
-                
-                ad = ad_group_ad.ad
-                ad.final_urls.append(final_url)
-                
-                rsa = ad.responsive_search_ad
-                
-                # Add headlines (need at least 3, max 15) - Google Ads limit: 30 chars
-                for headline_text in headlines[:15]:
-                    headline_asset = client.get_type("AdTextAsset")
-                    headline_asset.text = headline_text[:30]  # Max 30 chars for headlines
-                    rsa.headlines.append(headline_asset)
-                
-                # Add descriptions (need at least 2, max 4)
-                for desc_text in descriptions[:4]:
-                    description_asset = client.get_type("AdTextAsset")
-                    description_asset.text = desc_text[:90]  # Max 90 chars
-                    rsa.descriptions.append(description_asset)
-                
-                response = service.mutate_ad_group_ads(
-                    customer_id=str(self.client_id),  # Use client_id for campaign creation
-                    operations=[operation]
-                )
-                
-                ad_id = response.results[0].resource_name.split("/")[-1]
-                return {"success": True, "ad_id": ad_id}
-            
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(None, _create_ad_sync)
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error creating ad: {e}")
-            return {"success": False, "error": str(e)}
+        """Performance Max doesn't create individual ads - return success for compatibility"""
+        logger.info(f"Performance Max campaigns don't create individual ads - assets are in asset groups")
+        return {"success": True, "ad_id": "pmax_auto_generated", "skipped": True}
 
