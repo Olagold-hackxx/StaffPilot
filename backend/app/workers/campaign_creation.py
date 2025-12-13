@@ -5,7 +5,7 @@ import asyncio
 import uuid
 from typing import Dict, Any
 from uuid import UUID
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from app.workers import celery_app
@@ -243,23 +243,23 @@ REQUIRED OUTPUT FORMAT - You MUST return valid JSON only with this exact structu
       "platforms": ["meta_ads", "google_ads"]
     }}
   ],
-  "priority_metrics": ["CPA", "ROAS", "CTR"],
-  "ad_copy": {
-    "meta_ads": {
-      "headlines": ["Headline 1", "Headline 2", "Headline 3"],
-      "descriptions": ["Description 1", "Description 2"],
-      "link_url": "https://example.com/landing-page"
-    },
-    "google_ads": {
-      "headlines": ["Headline 1", "Headline 2", "Headline 3"],
-      "descriptions": ["Description 1", "Description 2"],
-      "final_url": "https://example.com/landing-page"
-    }
-  },
-  "budget_allocation": {
-    "meta_ads": 50,
-    "google_ads": 50
-  }
+  \"priority_metrics\": [\"CPA\", \"ROAS\", \"CTR\"],
+  \"ad_copy\": {{
+    \"meta_ads\": {{
+      \"headlines\": [\"Headline 1\", \"Headline 2\", \"Headline 3\"],
+      \"descriptions\": [\"Description 1\", \"Description 2\"],
+      \"link_url\": \"https://example.com/landing-page\"
+    }},
+    \"google_ads\": {{
+      \"headlines\": [\"Headline 1\", \"Headline 2\", \"Headline 3\"],
+      \"descriptions\": [\"Description 1\", \"Description 2\"],
+      \"final_url\": \"https://example.com/landing-page\"
+    }}
+  }},
+  \"budget_allocation\": {{
+    \"meta_ads\": 50,
+    \"google_ads\": 50
+  }}
 }}
 
 IMPORTANT: 
@@ -268,6 +268,8 @@ IMPORTANT:
 - Include the website URL ({website_url}) as the link_url/final_url in ad_copy. If no website_url is provided, use the most relevant URL found in context.
 - Make recommendations specific to the channels: {', '.join(channels)}
 - Ensure steps are actionable and time estimates are realistic
+- CRITICAL: Google Ads headlines MUST be 30 characters or less. Meta Ads headlines can be up to 40 characters.
+- CRITICAL: Google Ads descriptions MUST be 90 characters or less. Meta Ads descriptions can be up to 125 characters.
 """
                     
                     # Agent.execute is async, so we need to handle it
@@ -1186,7 +1188,7 @@ def _execute_video_generation(
             if rag_results:
                 # rag_results is List[Dict], extract 'content' field
                 rag_texts = [chunk.get("content", "") for chunk in rag_results if isinstance(chunk, dict)]
-                rag_context = "\nBAND GUIDELINES & VIDEO STYLE:\n" + "\n".join(rag_texts)
+                rag_context = "\nBRAND GUIDELINES & VIDEO STYLE:\n" + "\n".join(rag_texts)
         except Exception as e:
             logger.warning(f"Failed to retrieve RAG context for video: {e}")
 
@@ -1240,9 +1242,7 @@ Create a compelling video ad that:
     # Upload to storage
     video_urls = []
     # Mock video for now if mock data
-    if video_data == b"MOCK_VIDEO":
-         video_urls.append("https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4")
-    elif video_data:
+    if video_data:
         storage = get_storage()
         try:
             video_bytes = BytesIO()

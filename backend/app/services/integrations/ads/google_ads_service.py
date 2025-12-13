@@ -258,10 +258,10 @@ class GoogleAdsCampaignService:
                 
                 rsa = ad.responsive_search_ad
                 
-                # Add headlines (need at least 3, max 15)
+                # Add headlines (need at least 3, max 15) - Google Ads limit: 30 chars
                 for headline_text in headlines[:15]:
                     headline_asset = client.get_type("AdTextAsset")
-                    headline_asset.text = headline_text
+                    headline_asset.text = headline_text[:30]  # Max 30 chars for headlines
                     rsa.headlines.append(headline_asset)
                 
                 # Add descriptions (need at least 2, max 4)
