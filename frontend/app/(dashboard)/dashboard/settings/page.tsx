@@ -15,7 +15,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 
 const tenantSchema = z.object({
   name: z.string().min(2, "Name must be at least 2 characters"),
-  website: z.string().url("Invalid URL").optional().or(z.literal("")),
+  website_url: z.string().url("Invalid URL").optional().or(z.literal("")),
 })
 
 type TenantFormValues = z.infer<typeof tenantSchema>
@@ -30,7 +30,7 @@ export default function SettingsPage() {
     resolver: zodResolver(tenantSchema),
     defaultValues: {
       name: "",
-      website: "",
+      website_url: "",
     },
   })
 
@@ -48,7 +48,7 @@ export default function SettingsPage() {
       setUser(userData)
       form.reset({
         name: tenantData.name || "",
-        website: tenantData.website || "",
+        website_url: tenantData.website_url || "",
       })
     } catch (error: any) {
       toast({
@@ -65,7 +65,7 @@ export default function SettingsPage() {
     try {
       await apiClient.updateTenant({
         name: data.name,
-        website: data.website || undefined,
+        website_url: data.website_url || undefined,
       })
       toast({
         title: "Success",
@@ -116,7 +116,7 @@ export default function SettingsPage() {
                 />
                 <FormField
                   control={form.control}
-                  name="website"
+                  name="website_url"
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Website</FormLabel>

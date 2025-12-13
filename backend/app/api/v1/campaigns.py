@@ -363,8 +363,21 @@ async def approve_campaign(
                             headlines = ad_copy.get("headlines", [])
                             descriptions = ad_copy.get("descriptions", [])
                             
-                            # Determine final URL
-                            final_url_val = ad_copy.get("final_url") or website_url
+                            # Determine final URL - check multiple sources
+                            logger.info(f"DEBUG: Resolving URL. ad_copy keys: {ad_copy.keys()}")
+                            logger.info(f"DEBUG: ad_copy.final_url: {ad_copy.get('final_url')}")
+                            logger.info(f"DEBUG: ad_copy.link_url: {ad_copy.get('link_url')}")
+                            logger.info(f"DEBUG: plan.landing_page_url: {plan.get('landing_page_url')}")
+                            logger.info(f"DEBUG: plan.website_url: {plan.get('website_url')}")
+                            logger.info(f"DEBUG: tenant.website_url: {website_url}")
+                            
+                            final_url_val = (
+                                ad_copy.get("final_url") or 
+                                ad_copy.get("link_url") or 
+                                plan.get("landing_page_url") or 
+                                plan.get("website_url") or
+                                website_url
+                            )
                             
                             if not final_url_val:
                                 errors.append(f"Google Ads: No landing page URL found. Please set a website URL in settings or in the ad plan.")
@@ -467,13 +480,26 @@ async def approve_campaign(
                             # Get image URL from ad_copy if available
                             image_url = ad_copy.get("image_url")
                             
+                            # Determine link URL - check multiple sources
+                            link_url_val = (
+                                ad_copy.get("link_url") or 
+                                ad_copy.get("final_url") or 
+                                plan.get("landing_page_url") or 
+                                plan.get("website_url") or 
+                                website_url
+                            )
+                            
+                            if not link_url_val:
+                                errors.append("Meta Ads: No landing page URL found. Please set a website URL in settings or in the ad plan.")
+                                continue
+
                             # Create ad creative
                             creative_result = await meta_service.create_ad_creative(
                                 name=f"{campaign.name} Creative",
                                 page_id=page_id,
                                 title=ad_copy.get("headlines", [""])[0] if ad_copy.get("headlines") else campaign.name,
                                 body=ad_copy.get("descriptions", [""])[0] if ad_copy.get("descriptions") else "",
-                                link_url=website_url or ad_copy.get("link_url", website_url),
+                                link_url=link_url_val,
                                 image_url=image_url
                             )
                             

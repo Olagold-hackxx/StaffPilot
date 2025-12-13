@@ -392,197 +392,183 @@ export default function CampaignsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Campaigns</h1>
-          <p className="text-muted-foreground">Create and manage marketing campaigns</p>
-        </div>
-        <div className="flex gap-2">
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-40">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Status</SelectItem>
-              <SelectItem value="draft">Draft</SelectItem>
-              <SelectItem value="active">Active</SelectItem>
-              <SelectItem value="paused">Paused</SelectItem>
-              <SelectItem value="completed">Completed</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button onClick={() => setShowCreateDialog(true)}>
-            <Plus className="h-4 w-4 mr-2" />
-            Create Campaign
-          </Button>
-        </div>
+
+      {/* Premium Hero Header */}
+      <div className="relative rounded-3xl overflow-hidden p-8 border border-white/10 glass-card">
+         <div className="absolute inset-0 bg-gradient-to-r from-blue-600/10 via-purple-600/10 to-pink-600/10 opacity-50" />
+         <div className="absolute -top-24 -right-24 w-64 h-64 bg-primary/20 rounded-full blur-[100px]" />
+         
+         <div className="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+            <div className="space-y-2">
+               <h1 className="text-4xl font-bold tracking-tight bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent">
+                  Campaigns
+               </h1>
+               <p className="text-muted-foreground text-lg max-w-xl">
+                  Manage your AI-driven marketing strategies by StaffPilot.
+               </p>
+            </div>
+            
+            <div className="flex items-center gap-3 bg-black/20 p-1.5 rounded-xl border border-white/5 backdrop-blur-md">
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger className="w-40 border-none bg-transparent hover:bg-white/5 transition-colors focus:ring-0">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Status</SelectItem>
+                  <SelectItem value="draft">Draft</SelectItem>
+                  <SelectItem value="active">Active</SelectItem>
+                  <SelectItem value="paused">Paused</SelectItem>
+                  <SelectItem value="completed">Completed</SelectItem>
+                </SelectContent>
+              </Select>
+              
+              <div className="w-px h-6 bg-white/10" />
+              
+              <Button 
+                onClick={() => setShowCreateDialog(true)}
+                className="bg-primary hover:bg-primary/90 shadow-lg shadow-primary/25 rounded-lg px-6"
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                New Campaign
+              </Button>
+            </div>
+         </div>
       </div>
 
-      {/* Executions List */}
+      {/* Executions List - Horizontal Scroll for "Recent Activity" feel */}
       {executions.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Recent Campaign Executions</CardTitle>
-            <CardDescription>AI-generated campaigns in progress</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
+        <div className="mb-8">
+           <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+              <Loader2 className="h-4 w-4 text-primary animate-spin" />
+              Active AI Agents
+           </h2>
+           <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide">
               {executions.slice(0, 5).map((execution) => {
                 const campaign = campaigns.find(c => c.execution_id === execution.id)
                 return (
                   <div
                     key={execution.id}
-                    className="flex items-center justify-between p-3 border rounded-lg"
+                    className="min-w-[280px] p-4 rounded-xl bg-card/50 border border-border/50 backdrop-blur-sm shadow-sm"
                   >
-                    <div className="flex items-center gap-3">
-                      {execution.status === "running" ? (
-                        <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
-                      ) : execution.status === "completed" ? (
-                        <CheckCircle2 className="h-4 w-4 text-green-500" />
-                      ) : execution.status === "failed" ? (
-                        <Clock className="h-4 w-4 text-red-500" />
-                      ) : (
-                        <Clock className="h-4 w-4 text-muted-foreground" />
-                      )}
-                      <div>
-                        <p className="text-sm font-medium">
-                          {campaign?.name || "Campaign Creation"}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          {execution.status} • {new Date(execution.created_at).toLocaleString()}
-                        </p>
-                      </div>
+                    <div className="flex items-center justify-between mb-2">
+                       <Badge variant={getStatusColor(execution.status)} className="capitalize">
+                          {execution.status}
+                       </Badge>
+                       <span className="text-xs text-muted-foreground">{new Date(execution.created_at).toLocaleTimeString()}</span>
                     </div>
-                    <Badge variant={getStatusColor(execution.status)}>
-                      {execution.status}
-                    </Badge>
+                    <p className="font-medium text-sm truncate">{campaign?.name || "New Campaign Strategy"}</p>
+                    <p className="text-xs text-muted-foreground mt-1">AI Agent is generating plan...</p>
                   </div>
                 )
               })}
-            </div>
-          </CardContent>
-        </Card>
+           </div>
+        </div>
       )}
 
-      {/* Campaigns List */}
+      {/* Campaigns Grid - Bento Style */}
       {campaigns.length === 0 ? (
-        <Card>
-          <CardContent className="p-12 text-center">
-            <Target className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-            <h3 className="text-lg font-semibold mb-2">No campaigns yet</h3>
-            <p className="text-muted-foreground mb-4">
-              Create your first marketing campaign and let AI generate a comprehensive strategy
-            </p>
-            <Button onClick={() => setShowCreateDialog(true)}>
-              <Plus className="h-4 w-4 mr-2" />
-              Create Campaign
-            </Button>
-          </CardContent>
-        </Card>
+        <div className="flex flex-col items-center justify-center py-24 text-center border-2 border-dashed border-muted-foreground/10 rounded-3xl bg-muted/5">
+           <div className="h-20 w-20 rounded-2xl bg-primary/10 flex items-center justify-center mb-6 animate-float">
+              <Target className="h-10 w-10 text-primary" />
+           </div>
+           <h3 className="text-2xl font-bold mb-3 tracking-tight">No campaigns yet</h3>
+           <p className="text-muted-foreground max-w-md mb-8 leading-relaxed">
+             Launch your first AI-driven marketing campaign. Our digital marketer agent will build a complete strategy for you.
+           </p>
+           <Button 
+              size="lg" 
+              onClick={() => setShowCreateDialog(true)}
+              className="bg-primary hover:bg-primary/90 rounded-full px-8 shadow-lg shadow-primary/20 hover:shadow-primary/30 transition-all font-medium"
+           >
+             <Plus className="h-5 w-5 mr-2" />
+             Create First Campaign
+           </Button>
+        </div>
       ) : (
-        <div className="grid gap-4">
-          {campaigns.map((campaign) => (
-            <Card key={campaign.id}>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div className="flex-1">
-                    <CardTitle>{campaign.name}</CardTitle>
-                    <CardDescription>{campaign.description || "No description"}</CardDescription>
-                  </div>
-                  <Badge variant={getStatusColor(campaign.status)}>
-                    {campaign.status}
-                  </Badge>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-                  <div>
-                    <p className="text-sm text-muted-foreground flex items-center gap-1">
-                      <Target className="h-3 w-3" />
-                      Channels
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {campaigns.map((campaign, index) => {
+             // Calculate Progress
+             const totalSteps = campaign.plan?.steps?.length || 0
+             const completedSteps = campaign.plan?.steps?.filter((s: any) => s.status === 'completed').length || 0
+             const progress = totalSteps === 0 ? 0 : Math.round((completedSteps / totalSteps) * 100)
+             
+             return (
+              <div 
+                 key={campaign.id}
+                 className="group relative flex flex-col glass-card-interactive rounded-2xl overflow-hidden min-h-[280px]"
+                 onClick={() => router.push(`/dashboard/campaigns/${campaign.id}/workspace`)}
+                 style={{ cursor: 'pointer' }}
+              >
+                  {/* Decorative Gradient Blob */}
+                  <div className="absolute -top-20 -right-20 w-40 h-40 bg-primary/10 rounded-full blur-3xl group-hover:bg-primary/20 transition-all duration-500" />
+                  
+                  <div className="p-6 flex-1 flex flex-col relative z-10">
+                    <div className="flex items-start justify-between mb-4">
+                       <div className="p-2.5 rounded-xl bg-muted/50 border border-white/5">
+                          <Target className="h-5 w-5 text-primary" />
+                       </div>
+                       <Badge variant={getStatusColor(campaign.status)} className="rounded-full px-3 capitalize shadow-none">
+                          {campaign.status}
+                       </Badge>
+                    </div>
+                    
+                    <h3 className="text-lg font-bold mb-2 group-hover:text-primary transition-colors line-clamp-1">
+                       {campaign.name}
+                    </h3>
+                    <p className="text-sm text-muted-foreground line-clamp-2 mb-6 flex-1">
+                       {campaign.description || "No description provided."}
                     </p>
-                    <p className="font-medium">{campaign.channels.length}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {campaign.channels.map(c => c.replace("_", " ")).join(", ")}
-                    </p>
+                    
+                    {/* Metrics / Content */}
+                    <div className="grid grid-cols-2 gap-4 mb-6">
+                       <div className="space-y-1">
+                          <p className="text-xs text-muted-foreground uppercase tracking-wider font-medium">Budget</p>
+                          <p className="text-sm font-semibold">{campaign.total_budget ? `$${campaign.total_budget.toLocaleString()}` : "Not Set"}</p>
+                       </div>
+                       <div className="space-y-1">
+                          <p className="text-xs text-muted-foreground uppercase tracking-wider font-medium">Channels</p>
+                          <div className="flex gap-1.5">
+                             {campaign.channels.slice(0, 3).map((c, i) => (
+                                <div key={i} className="h-5 w-5 rounded-full bg-blue-500/10 flex items-center justify-center" title={c}>
+                                   <span className="text-[10px] font-bold text-blue-500">{c[0].toUpperCase()}</span>
+                                </div>
+                             ))}
+                             {campaign.channels.length > 3 && (
+                                <span className="text-xs text-muted-foreground">+{campaign.channels.length - 3}</span>
+                             )}
+                          </div>
+                       </div>
+                    </div>
+
+                    {/* Footer / Progress */}
+                    <div className="pt-4 border-t border-border/50">
+                       <div className="flex justify-between text-xs mb-2">
+                          <span className="text-muted-foreground">{totalSteps} Steps</span>
+                          <span className="font-medium text-foreground">{progress}% Complete</span>
+                       </div>
+                       <div className="h-1.5 w-full bg-muted/50 rounded-full overflow-hidden">
+                          <div 
+                             className="h-full bg-gradient-to-r from-blue-500 to-purple-500 transition-all duration-1000 ease-out" 
+                             style={{ width: `${progress}%` }}
+                          />
+                       </div>
+                    </div>
                   </div>
-                  {campaign.total_budget && (
-                    <div>
-                      <p className="text-sm text-muted-foreground flex items-center gap-1">
-                        <DollarSign className="h-3 w-3" />
-                        Budget
-                      </p>
-                      <p className="font-medium">${campaign.total_budget.toLocaleString()}</p>
-                    </div>
-                  )}
-                  {campaign.start_date && (
-                    <div>
-                      <p className="text-sm text-muted-foreground flex items-center gap-1">
-                        <Calendar className="h-3 w-3" />
-                        Duration
-                      </p>
-                      <p className="font-medium text-sm">
-                        {new Date(campaign.start_date).toLocaleDateString()} - {campaign.end_date ? new Date(campaign.end_date).toLocaleDateString() : "Ongoing"}
-                      </p>
-                    </div>
-                  )}
-                  {campaign.metrics && Object.keys(campaign.metrics).length > 0 && (
-                    <div>
-                      <p className="text-sm text-muted-foreground flex items-center gap-1">
-                        <TrendingUp className="h-3 w-3" />
-                        Performance
-                      </p>
-                      <p className="font-medium text-sm">
-                        {campaign.metrics.impressions ? `${campaign.metrics.impressions.toLocaleString()} impressions` : "N/A"}
-                      </p>
-                    </div>
-                  )}
-                </div>
-                <div className="flex gap-2">
-                  {campaign.status === "draft" && (
-                    <>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => router.push(`/dashboard/campaigns/${campaign.id}/workspace`)}
-                      >
-                        <LayoutDashboard className="h-4 w-4 mr-1" />
-                        Workspace
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => router.push(`/dashboard/campaigns/${campaign.id}`)}
-                      >
-                        <Eye className="h-4 w-4 mr-1" />
-                        Review
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => openFeedbackDialog(campaign)}
-                      >
-                        <MessageSquare className="h-4 w-4 mr-1" />
-                        Provide Feedback
-                      </Button>
-                      <Button
-                        size="sm"
-                        onClick={() => openApproveDialog(campaign)}
-                      >
-                        <CheckCircle2 className="h-4 w-4 mr-1" />
-                        Approve & Launch
-                      </Button>
-                    </>
-                  )}
-                  {campaign.status === "active" && (
-                    <Button size="sm" variant="outline">
-                      <Pause className="h-4 w-4 mr-1" />
-                      Pause
-                    </Button>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+              </div>
+            )
+          })}
+          
+          {/* New Campaign Card (Placeholder style) */}
+          <div 
+             className="flex flex-col items-center justify-center p-6 border border-dashed border-border rounded-2xl hover:bg-muted/5 transition-colors cursor-pointer min-h-[280px] group"
+             onClick={() => setShowCreateDialog(true)}
+          >
+             <div className="h-14 w-14 rounded-full bg-muted group-hover:bg-primary/10 flex items-center justify-center mb-4 transition-colors">
+                <Plus className="h-6 w-6 text-muted-foreground group-hover:text-primary transition-colors" />
+             </div>
+             <p className="font-medium group-hover:text-primary transition-colors">Create New Campaign</p>
+             <p className="text-xs text-muted-foreground mt-1">Start a new AI strategy</p>
+          </div>
         </div>
       )}
 

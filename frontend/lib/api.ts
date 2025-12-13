@@ -179,8 +179,8 @@ class ApiClient {
   }
 
   // Tenant endpoints
-  async getTenant(): Promise<{ name?: string; website?: string; [key: string]: any }> {
-    return this.request<{ name?: string; website?: string; [key: string]: any }>('/tenants/me');
+  async getTenant(): Promise<{ name?: string; website_url?: string; [key: string]: any }> {
+    return this.request<{ name?: string; website_url?: string; [key: string]: any }>('/tenants/me');
   }
 
   async updateTenant(data: any) {

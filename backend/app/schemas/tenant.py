@@ -14,6 +14,7 @@ class TenantBase(BaseModel):
     brand_voice: str = "professional"
     target_audience: Optional[str] = None
     offerings: Optional[str] = None
+    website_url: Optional[str] = None  # Website URL for campaigns/ads
     custom_config: Dict = {}
 
 
@@ -27,6 +28,7 @@ class TenantUpdate(BaseModel):
     brand_voice: Optional[str] = None
     target_audience: Optional[str] = None
     offerings: Optional[str] = None
+    website_url: Optional[str] = None  # Website URL for campaigns/ads
     custom_config: Optional[Dict] = None
 
 
@@ -36,6 +38,7 @@ class TenantResponse(TenantBase):
     subscription_plan: str
     is_active: bool
     is_onboarded: bool
+    website_url: Optional[str] = None  # Website URL for campaigns/ads
     created_at: datetime
     updated_at: Optional[datetime]
     trial_ends_at: Optional[datetime]

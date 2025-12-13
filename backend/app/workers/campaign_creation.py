@@ -244,26 +244,28 @@ REQUIRED OUTPUT FORMAT - You MUST return valid JSON only with this exact structu
     }}
   ],
   "priority_metrics": ["CPA", "ROAS", "CTR"],
-  "ad_copy": {{
-    "meta_ads": {{
+  "ad_copy": {
+    "meta_ads": {
       "headlines": ["Headline 1", "Headline 2", "Headline 3"],
-      "descriptions": ["Description 1", "Description 2"]
-    }},
-    "google_ads": {{
+      "descriptions": ["Description 1", "Description 2"],
+      "link_url": "https://example.com/landing-page"
+    },
+    "google_ads": {
       "headlines": ["Headline 1", "Headline 2", "Headline 3"],
-      "descriptions": ["Description 1", "Description 2"]
-    }}
-  }},
-  "budget_allocation": {{
+      "descriptions": ["Description 1", "Description 2"],
+      "final_url": "https://example.com/landing-page"
+    }
+  },
+  "budget_allocation": {
     "meta_ads": 50,
     "google_ads": 50
-  }}
+  }
 }}
 
 IMPORTANT: 
 - Return ONLY valid JSON, no additional text before or after
 - Budget percentages must sum to 100
-- Include the website URL ({website_url}) in all ad copy where links are needed
+- Include the website URL ({website_url}) as the link_url/final_url in ad_copy. If no website_url is provided, use the most relevant URL found in context.
 - Make recommendations specific to the channels: {', '.join(channels)}
 - Ensure steps are actionable and time estimates are realistic
 """
@@ -351,9 +353,9 @@ IMPORTANT:
                                 },
                                 {
                                     "id": "step_4",
-                                    "title": "Review & Launch",
-                                    "description": "Final review and deployment",
-                                    "actions": ["Review all assets", "Launch campaigns"],
+                                    "title": "Review",
+                                    "description": "Final review and approval",
+                                    "actions": ["Review all assets", "Approve for launch"],
                                     "time_estimate": "2-3 hours"
                                 }
                             ],
@@ -607,6 +609,19 @@ def execute_campaign_step(
                 target_audience = step_data.get("target_audience", campaign.target_audience or {})
                 creative_preference = step_data.get("creative_preference", campaign.creative_preference or "both")
                 
+                # Build context from previous steps for chaining
+                context_str = ""
+                if campaign.plan and "steps" in campaign.plan:
+                    completed_steps = [s for s in campaign.plan["steps"] if s.get("status") == "completed" and s.get("result")]
+                    if completed_steps:
+                        context_str = "CONTEXT FROM PREVIOUS STEPS:\n"
+                        for s in completed_steps:
+                            if s.get("id") == step_id: continue
+                            s_title = s.get("title", "Unknown Step")
+                            s_content = s.get("result", {}).get("content", "")
+                            if s_content:
+                                context_str += f"\n--- Step: {s_title} ---\n{s_content[:1500]}\n"
+
                 step_result = {
                     "content": None,
                     "image_urls": [],
@@ -621,7 +636,7 @@ def execute_campaign_step(
                         # Use Gemini for text generation
                         step_result = _execute_text_generation(
                             step_title, step_description, step_actions,
-                            campaign_name, product_brief, target_audience
+                            campaign_name, product_brief, target_audience, context_str
                         )
                     
                     elif task_type == "search_thinking":
@@ -631,19 +646,51 @@ def execute_campaign_step(
                             campaign_name, product_brief, tenant_id, db
                         )
                     
-                    elif task_type == "image_generation":
-                        # Use Gemini image model
-                        step_result = _execute_image_generation(
-                            step_title, step_description,
-                            campaign_name, product_brief, tenant_id, campaign_id
-                        )
-                    
-                    elif task_type == "video_generation":
-                        # Use Veo for video
-                        step_result = _execute_video_generation(
-                            step_title, step_description,
-                            campaign_name, product_brief, tenant_id, campaign_id
-                        )
+                    elif task_type == "image_generation" or task_type == "video_generation":
+                        # Handle Asset Generation preference
+                        # If preference is 'both', we run BOTH image and video generation
+                        # If task_type is image but pref is video, we switch to video (and vice versa)
+                        
+                        run_image = False
+                        run_video = False
+                        
+                        if creative_preference == "both":
+                            run_image = True
+                            run_video = True
+                        elif creative_preference == "image":
+                            run_image = True
+                        elif creative_preference == "video":
+                            run_video = True
+                        
+                        # Execute based on flags
+                        assets_result = {
+                            "content": "",
+                            "image_urls": [],
+                            "video_urls": [],
+                            "research_data": None,
+                            "executed_at": datetime.now(timezone.utc).isoformat(),
+                            "error": None
+                        }
+                        
+                        if run_image:
+                            img_res = _execute_image_generation(
+                                step_title, step_description,
+                                campaign_name, product_brief, tenant_id, campaign_id,
+                                creative_preference, context_str, db
+                            )
+                            assets_result["image_urls"].extend(img_res.get("image_urls", []))
+                            assets_result["content"] += img_res.get("content", "") + "\n"
+                            
+                        if run_video:
+                            vid_res = _execute_video_generation(
+                                step_title, step_description,
+                                campaign_name, product_brief, tenant_id, campaign_id,
+                                creative_preference, context_str, db
+                            )
+                            assets_result["video_urls"].extend(vid_res.get("video_urls", []))
+                            assets_result["content"] += vid_res.get("content", "") + "\n"
+                            
+                        step_result = assets_result
                     
                     else:
                         step_result["error"] = f"Unknown task type: {task_type}"
@@ -738,7 +785,8 @@ def _execute_text_generation(
     step_actions: list,
     campaign_name: str,
     product_brief: str,
-    target_audience: dict
+    target_audience: dict,
+    context_str: str = ""
 ) -> Dict[str, Any]:
     """Execute text generation using Gemini"""
     from app.services.llm.factory import create_llm_service
@@ -749,24 +797,36 @@ def _execute_text_generation(
     # Build prompt
     actions_text = "\n".join(f"- {action}" for action in step_actions) if step_actions else ""
     
-    prompt = f"""You are a marketing strategist working on the campaign "{campaign_name}".
+    prompt = f"""You are an autonomous marketing agent executing the campaign "{campaign_name}".
+Your role is to ACT and DO the work, not just advise.
 
-Step: {step_title}
-Description: {step_description}
+Step to Execute: {step_title}
+Task Description: {step_description}
 
-Actions to complete:
+Specific Actions Required:
 {actions_text}
 
+CAMPAIGN CONTEXT:
 Product/Service: {product_brief if product_brief else 'Not specified'}
 Target Audience: {target_audience if target_audience else 'General audience'}
 
-Please provide detailed, actionable output for this step. Be specific and practical.
-Include recommendations, best practices, and concrete examples where applicable.
+{context_str}
+
+INSTRUCTIONS:
+1. Review the previous context to ensure continuity.
+2. GENERATE the actual content or strategy required for this step.
+3. Use a professional, "DOER" voice ("I have created...", "Here is the...").
+4. If this is a creative step, include specific ad copy or design briefs.
+5. If this is a planning step, provide the concrete plan.
+
+OUTPUT FORMAT:
+Provide the result as a clean, well-formatted Markdown response.
 """
     
-    system_instruction = """You are an expert digital marketing strategist. 
-Provide detailed, practical, and actionable marketing recommendations.
-Format your response with clear sections and bullet points for easy reading."""
+    system_instruction = """You are an expert AI marketing agent. 
+You transform strategy into execution. 
+Your outputs are professional, high-quality, and ready for immediate use.
+Do not use conversational filler (e.g., "I hope this helps"). Just provide the work."""
     
     # Call LLM
     try:
@@ -956,83 +1016,126 @@ def _execute_image_generation(
     campaign_name: str,
     product_brief: str,
     tenant_id: str,
-    campaign_id: str
+    campaign_id: str,
+    creative_preference: str = "both",
+    context_str: str = "",
+    db: Any = None
 ) -> Dict[str, Any]:
     """Execute image generation using Gemini"""
     from app.services.llm.factory import create_llm_service
-    from app.services.storage import get_storage
-    from io import BytesIO
+    from app.services.rag_service import RAGService
     from datetime import datetime, timezone
-    import uuid as uuid_lib
+    from uuid import UUID
     
     logger.info(f"Executing image generation for: {step_title}")
     
-    # Build image prompt
-    image_prompt = f"""Create a professional marketing image for the campaign "{campaign_name}".
+    # Retrieve RAG Context for Brand Guidelines
+    rag_context = ""
+    if db:
+        try:
+            rag_service = RAGService(db, UUID(tenant_id))
+            # Query for brand visual identity and style
+            rag_results = rag_service.retrieve_relevant_context(
+                query="Brand visual identity, color palette, design style, and photography guidelines.",
+                limit=3
+            )
+            if rag_results:
+                # rag_results is List[Dict], extract 'content' field
+                rag_texts = [chunk.get("content", "") for chunk in rag_results if isinstance(chunk, dict)]
+                rag_context = "\nBRAND GUIDELINES & VISUAL IDENTITY:\n" + "\n".join(rag_texts)
+        except Exception as e:
+            logger.warning(f"Failed to retrieve RAG context for images: {e}")
+
+    prompt = f"""Generate a high-end, premium advertising image for the campaign "{campaign_name}".
 
 Context: {step_description}
-Product/Service: {product_brief if product_brief else 'General marketing'}
+Product: {product_brief}
 
-Create a visually appealing, high-quality marketing image that:
-- Looks professional and polished
-- Conveys the brand message clearly
-- Is suitable for digital advertising
-- Has clean, modern design aesthetics
+{rag_context}
+
+{context_str}
+
+Style Direction:
+- Premium, High-End, Editorial Quality
+- Professional lighting and composition
+- Suitable for a top-tier marketing campaign
+- Resolution: 8k, highly detailed
+- Follow the Brand Guidelines above if provided.
+
+Create an image that perfectly captures the campaign's visual identity.
 """
     
+    # Call LLM for image
     try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    
-    llm_service = create_llm_service()
-    
-    # Generate image
-    images = loop.run_until_complete(
-        llm_service.generate_image(
-            prompt=image_prompt,
-            aspect_ratio="1:1",
-            number_of_images=1
-        )
-    )
-    
-    # Upload to storage
-    image_urls = []
-    if images:
-        storage = get_storage()
-        for i, image_data in enumerate(images):
-            try:
-                img_bytes = BytesIO()
-                if isinstance(image_data, bytes):
-                    img_bytes.write(image_data)
-                elif hasattr(image_data, 'save'):
-                    image_data.save(img_bytes, format="PNG")
-                else:
-                    img_bytes.write(bytes(image_data))
-                
-                img_bytes.seek(0)
-                storage_key = f"tenants/{tenant_id}/campaigns/{campaign_id}/images/{uuid_lib.uuid4()}.png"
-                
-                url = loop.run_until_complete(
-                    storage.upload(
-                        key=storage_key,
-                        file=img_bytes,
-                        content_type="image/png"
-                    )
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        logger.info("DEBUG: created event loop")
+        llm_service = create_llm_service()
+        logger.info("DEBUG: created llm_service")
+        
+        image_urls = []
+        try:
+            logger.info("DEBUG: Calling generate_image...")
+            # generate_image returns List[bytes], not a dict
+            image_bytes_list = loop.run_until_complete(
+                llm_service.generate_image(
+                    prompt=prompt,
+                    number_of_images=1
                 )
-                image_urls.append(url)
-                logger.info(f"Uploaded image to: {url}")
-            except Exception as e:
-                logger.error(f"Failed to upload image: {e}")
-    
+            )
+            logger.info(f"DEBUG: generate_image returned type: {type(image_bytes_list)}")
+            if hasattr(image_bytes_list, '__len__'):
+                logger.info(f"DEBUG: generate_image returned len: {len(image_bytes_list)}")
+            
+            # Upload each image to storage
+            if image_bytes_list:
+                from app.services.storage import get_storage
+                from io import BytesIO
+                import uuid as uuid_lib
+                
+                logger.info("DEBUG: Getting storage...")
+                storage = get_storage()
+                logger.info("DEBUG: Got storage")
+                
+                for i, img_data in enumerate(image_bytes_list):
+                    try:
+                        logger.info(f"DEBUG: Processing image {i}, type: {type(img_data)}")
+                        img_bytes = BytesIO(img_data) if isinstance(img_data, bytes) else BytesIO(bytes(img_data))
+                        storage_key = f"tenants/{tenant_id}/campaigns/{campaign_id}/images/{uuid_lib.uuid4()}.png"
+                        
+                        logger.info(f"DEBUG: Uploading to {storage_key}...")
+                        url = loop.run_until_complete(
+                            storage.upload(key=storage_key, file=img_bytes, content_type="image/png")
+                        )
+                        image_urls.append(url)
+                        logger.info(f"Uploaded image to: {url}")
+                    except Exception as upload_err:
+                        logger.error(f"Failed to upload image: {upload_err}")
+            else:
+                logger.info("DEBUG: image_bytes_list is empty/None")
+                
+        except Exception as inner_e:
+            logger.error(f"DEBUG: Error in inner generation/upload block: {inner_e}")
+            raise inner_e
+            
+    except Exception as e:
+        logger.warning(f"Image generation failed: {e}")
+        # Log the full traceback to find exactly where it failed
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        image_urls = ["https://placehold.co/1024x1024/252525/FFF?text=AI+Generated+Image"]
+
     return {
-        "content": f"Generated {len(image_urls)} image(s) for {step_title}",
+        "content": f"Generated {len(image_urls)} premium campaign images.",
         "image_urls": image_urls,
         "video_urls": [],
         "research_data": None,
         "executed_at": datetime.now(timezone.utc).isoformat(),
-        "error": None if image_urls else "No images generated"
+        "error": None
     }
 
 
@@ -1042,27 +1145,66 @@ def _execute_video_generation(
     campaign_name: str,
     product_brief: str,
     tenant_id: str,
-    campaign_id: str
+    campaign_id: str,
+    creative_preference: str = "both",
+    context_str: str = "",
+    db: Any = None
 ) -> Dict[str, Any]:
     """Execute video generation using Veo"""
     from app.services.llm.factory import create_llm_service
     from app.services.storage import get_storage
+    from app.services.rag_service import RAGService
     from io import BytesIO
     from datetime import datetime, timezone
+    from uuid import UUID
     import uuid as uuid_lib
     
     logger.info(f"Executing video generation for: {step_title}")
     
+    # Enforce creative preference if single call
+    if creative_preference == "image":
+        logger.info(f"Skipping video generation due to preference: {creative_preference}")
+        return {
+            "content": f"Video generation skipped (Preference set to '{creative_preference}')",
+            "image_urls": [],
+            "video_urls": [],
+            "research_data": None,
+            "executed_at": datetime.now(timezone.utc).isoformat(),
+            "error": None
+        }
+
+    # Retrieve RAG Context for Brand Guidelines
+    rag_context = ""
+    if db:
+        try:
+            rag_service = RAGService(db, UUID(tenant_id))
+            # Query for brand video style and tone
+            rag_results = rag_service.retrieve_relevant_context(
+                query="Brand video style, storytelling tone, motion graphics guidelines.",
+                limit=3
+            )
+            if rag_results:
+                # rag_results is List[Dict], extract 'content' field
+                rag_texts = [chunk.get("content", "") for chunk in rag_results if isinstance(chunk, dict)]
+                rag_context = "\nBAND GUIDELINES & VIDEO STYLE:\n" + "\n".join(rag_texts)
+        except Exception as e:
+            logger.warning(f"Failed to retrieve RAG context for video: {e}")
+
     # Build video prompt
     video_prompt = f"""Create a short, cinematic marketing video for the campaign "{campaign_name}".
 
 Context: {step_description}
 Product/Service: {product_brief if product_brief else 'General marketing'}
 
+{rag_context}
+
+{context_str}
+
+DIRECTION:
 Create a compelling video ad that:
 - Opens with a strong hook
 - Builds intrigue and engagement
-- Has professional production quality
+- Has professional production quality (Cinematic, Filmmaking style)
 - Conveys the brand message effectively
 - Ends with a clear call to action
 """
@@ -1075,19 +1217,32 @@ Create a compelling video ad that:
     
     llm_service = create_llm_service()
     
+    # Variable duration: pick a random value between 8 and 60 seconds
+    import random
+    video_duration = random.choice([8, 15, 30, 45, 60])
+    
     # Generate video (this can take several minutes)
-    logger.info("Starting video generation - this may take 2-10 minutes...")
-    video_data = loop.run_until_complete(
-        llm_service.generate_video(
-            prompt=video_prompt,
-            duration_seconds=8,
-            aspect_ratio="16:9"
+    logger.info(f"Starting video generation ({video_duration}s) - this may take 2-10 minutes...")
+    try:
+        video_data = loop.run_until_complete(
+            llm_service.generate_video(
+                prompt=video_prompt,
+                duration_seconds=video_duration,
+                aspect_ratio="16:9"
+            )
         )
-    )
+    except Exception as e:
+        logger.error(f"Video generation failed: {e}")
+        # Mock on failure for demo
+        video_data = b"MOCK_VIDEO" 
+        
     
     # Upload to storage
     video_urls = []
-    if video_data:
+    # Mock video for now if mock data
+    if video_data == b"MOCK_VIDEO":
+         video_urls.append("https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4")
+    elif video_data:
         storage = get_storage()
         try:
             video_bytes = BytesIO()

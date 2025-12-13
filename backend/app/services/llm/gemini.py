@@ -402,44 +402,54 @@ Return your response as valid JSON only. Do not include any markdown formatting 
                 # Start video generation - returns an operation
                 # Based on user's working code: client.models.generate_videos()
                 try:
-                    # First, try the exact pattern from user's code
-                    operation = self.genai_client.models.generate_videos(
-                        model=model_name,
-                        prompt=prompt
-                    )
-                except AttributeError:
-                    # If generate_videos doesn't exist, try alternative patterns
-                    logger.warning("generate_videos not found on models, trying alternative methods...")
+                    # Configure video generation
+                    # The new API typically uses a config object
+                    config = None
+                    if types and hasattr(types, 'GenerateVideosConfig'):
+                        config = types.GenerateVideosConfig(
+                            aspect_ratio=aspect_ratio,
+                            duration_seconds=float(duration_seconds)
+                        )
                     
-                    # Log available methods for debugging
-                    available_methods = [m for m in dir(self.genai_client.models) if not m.startswith('_')]
-                    logger.debug(f"Available methods on models: {available_methods}")
-                    
-                    # Try direct client access
-                    if hasattr(self.genai_client, 'generate_videos'):
-                        operation = self.genai_client.generate_videos(
+                    # Call generate_videos with config
+                    if hasattr(self.genai_client.models, 'generate_videos'):
+                        call_kwargs = {'model': model_name, 'prompt': prompt}
+                        if config:
+                            call_kwargs['config'] = config
+                        
+                        operation = self.genai_client.models.generate_videos(**call_kwargs)
+                        
+                    elif hasattr(self.genai_client, 'generate_videos'):
+                        call_kwargs = {'model': model_name, 'prompt': prompt}
+                        if config:
+                            call_kwargs['config'] = config
+                            
+                        operation = self.genai_client.generate_videos(**call_kwargs)
+                    else:
+                        # Try getting the model first
+                         video_model = self.genai_client.models.get(model_name)
+                         call_kwargs = {'prompt': prompt}
+                         if config:
+                            call_kwargs['config'] = config
+                            
+                         if hasattr(video_model, 'generate_videos'):
+                             operation = video_model.generate_videos(**call_kwargs)
+                         elif hasattr(video_model, 'generate'):
+                             operation = video_model.generate(**call_kwargs)
+                         else:
+                             raise AttributeError("Video generation method not found")
+
+                except Exception as api_error:
+                    logger.warning(f"Standard generate_videos call failed: {api_error}. Trying fallback...")
+                    # Fallback: try raw kwargs if config object fails
+                    if hasattr(self.genai_client.models, 'generate_videos'):
+                         operation = self.genai_client.models.generate_videos(
                             model=model_name,
-                            prompt=prompt
+                            prompt=prompt,
+                            config={'duration_seconds': float(duration_seconds), 'aspect_ratio': aspect_ratio}
                         )
                     else:
-                        # Try getting the model first, then calling generate
-                        try:
-                            video_model = self.genai_client.models.get(model_name)
-                            if hasattr(video_model, 'generate_videos'):
-                                operation = video_model.generate_videos(prompt=prompt)
-                            elif hasattr(video_model, 'generate'):
-                                operation = video_model.generate(prompt=prompt)
-                            else:
-                                raise AttributeError(
-                                    f"Video generation method not found. "
-                                    f"Model methods: {[m for m in dir(video_model) if not m.startswith('_')]}"
-                                )
-                        except Exception as model_error:
-                            raise Exception(
-                                f"Video generation API not available. "
-                                f"Please ensure you're using the latest google-genai library (pip install --upgrade google-genai). "
-                                f"Error: {str(model_error)}"
-                            )
+                        raise api_error
                 
                 return operation
             

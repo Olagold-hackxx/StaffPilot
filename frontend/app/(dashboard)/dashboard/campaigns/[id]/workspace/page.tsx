@@ -418,25 +418,30 @@ export default function CampaignWorkspacePage() {
   return (
     <div className="h-[calc(100vh-6rem)] flex flex-col gap-4">
       {/* Header */}
-      <header className="flex items-center justify-between border-b pb-4 px-1 flex-shrink-0">
+      {/* Premium Header */}
+      <header className="flex items-center justify-between px-1 flex-shrink-0 mb-2">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => router.back()}>
-            <ArrowLeft className="h-4 w-4" />
+          <Button variant="ghost" size="icon" className="h-10 w-10 rounded-full hover:bg-white/5" onClick={() => router.back()}>
+            <ArrowLeft className="h-5 w-5" />
           </Button>
           <div>
             <div className="flex items-center gap-3">
-              <h1 className="text-xl font-bold tracking-tight">{campaign.name}</h1>
-              <Badge variant={campaign.status === "draft" ? "secondary" : "default"} className="uppercase text-[10px] tracking-wider">
+              <h1 className="text-2xl font-bold tracking-tight bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent">{campaign.name}</h1>
+              <Badge variant={campaign.status === "draft" ? "secondary" : "default"} className="uppercase text-[10px] tracking-wider px-2 py-0.5 h-5">
                 {campaign.status}
               </Badge>
             </div>
-            <p className="text-xs text-muted-foreground mt-1">Campaign Workspace</p>
+            <p className="text-sm text-muted-foreground/80">Campaign Workspace</p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
            {campaign.status === "draft" && (
-            <Button onClick={() => router.push(`/dashboard/campaigns/${campaign.id}`)} size="sm" className="h-8">
-              <CheckCircle2 className="h-3.5 w-3.5 mr-2" />
+            <Button 
+               onClick={() => router.push(`/dashboard/campaigns/${campaign.id}`)} 
+               size="sm" 
+               className="h-9 px-4 bg-primary hover:bg-primary/90 shadow-lg shadow-primary/20 rounded-lg"
+            >
+              <CheckCircle2 className="h-4 w-4 mr-2" />
               Review & Deploy
             </Button>
           )}
@@ -447,7 +452,7 @@ export default function CampaignWorkspacePage() {
       <div className="flex-1 grid grid-cols-12 gap-6 min-h-0">
         
         {/* Left Column - Plan & Progress */}
-        <section className="col-span-3 flex flex-col min-h-0 bg-card rounded-xl border shadow-sm overflow-hidden">
+        <section className="col-span-3 flex flex-col min-h-0 glass-panel rounded-2xl overflow-hidden border-white/5 shadow-2xl shadow-black/20">
           <div className="p-4 border-b bg-muted/20">
             <div className="flex items-center justify-between mb-4">
               <h2 className="font-semibold text-sm flex items-center gap-2">
@@ -515,10 +520,10 @@ export default function CampaignWorkspacePage() {
                     {campaign.plan.steps.map((step, index) => (
                       <div 
                         key={step.id}
-                        className={`group relative rounded-lg border transition-all duration-200 hover:shadow-md ${
+                        className={`group relative rounded-xl transition-all duration-300 backdrop-blur-sm ${
                           selectedStep?.id === step.id 
-                            ? 'border-primary bg-background ring-1 ring-primary/20 shadow-sm' 
-                            : 'bg-card hover:border-primary/50'
+                            ? 'border border-primary/50 bg-primary/10 ring-1 ring-primary/20 shadow-lg shadow-primary/5' 
+                            : 'border border-white/5 bg-white/5 hover:bg-white/10 hover:border-white/10'
                         }`}
                       >
                          {/* Connection Line (visual only) */}
@@ -603,7 +608,9 @@ export default function CampaignWorkspacePage() {
         </section>
 
         {/* Center Column - Main Canvas */}
-        <main className="col-span-6 flex flex-col min-h-0 bg-card rounded-xl border shadow-sm overflow-hidden">
+        <main className="col-span-6 flex flex-col min-h-0 glass-panel rounded-2xl overflow-hidden border-white/5 shadow-2xl shadow-black/20 relative">
+          {/* Subtle glow behind canvas */}
+          <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent opacity-50" />
           {selectedStep ? (
              <div className="flex flex-col h-full">
                 <div className="p-6 border-b">
@@ -704,8 +711,8 @@ export default function CampaignWorkspacePage() {
                            
                            {/* Text Content */}
                            {selectedStep.result.content && !selectedStep.result.error && (
-                             <div className="p-4 rounded-lg bg-gradient-to-br from-purple-50 to-blue-50 border">
-                               <div className="prose prose-sm max-w-none">
+                             <div className="p-5 rounded-lg glass-card border-white/5 shadow-inner">
+                               <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:font-semibold prose-a:text-primary">
                                  <ReactMarkdown>{selectedStep.result.content}</ReactMarkdown>
                                </div>
                              </div>
@@ -846,7 +853,7 @@ export default function CampaignWorkspacePage() {
         </main>
 
         {/* Right Column - Chat Assistant */}
-        <aside className="col-span-3 flex flex-col min-h-0 bg-card rounded-xl border shadow-sm overflow-hidden">
+        <aside className="col-span-3 flex flex-col min-h-0 glass-panel rounded-2xl overflow-hidden border-white/5 shadow-2xl shadow-black/20">
            <div className="p-4 border-b bg-muted/20">
               <h2 className="font-semibold text-sm flex items-center gap-2">
                  <Bot className="h-4 w-4 text-purple-500" />
@@ -876,8 +883,8 @@ export default function CampaignWorkspacePage() {
                           className={cn(
                             "rounded-lg px-4 py-2 max-w-[85%] text-sm shadow-sm",
                             msg.role === "user"
-                              ? "bg-primary text-primary-foreground ml-auto"
-                              : "bg-white dark:bg-card border border-border mr-auto"
+                              ? "bg-primary text-primary-foreground ml-auto shadow-md shadow-primary/20"
+                              : "glass-card border-white/10 mr-auto text-foreground/90 backdrop-blur-md"
                           )}
                         >
                           {msg.role === "user" ? (
