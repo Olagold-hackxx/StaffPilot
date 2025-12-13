@@ -4,15 +4,15 @@ Custom exception classes
 from typing import Optional
 
 
-class CODIANException(Exception):
-    """Base exception for CODIAN platform"""
+class StaffPilotException(Exception):
+    """Base exception for StaffPilot platform"""
     def __init__(self, message: str, status_code: int = 500):
         self.message = message
         self.status_code = status_code
         super().__init__(self.message)
 
 
-class TenantNotFoundError(CODIANException):
+class TenantNotFoundError(StaffPilotException):
     """Tenant not found"""
     def __init__(self, tenant_id: str):
         super().__init__(
@@ -21,7 +21,7 @@ class TenantNotFoundError(CODIANException):
         )
 
 
-class UserNotFoundError(CODIANException):
+class UserNotFoundError(StaffPilotException):
     """User not found"""
     def __init__(self, user_id: str):
         super().__init__(
@@ -30,7 +30,7 @@ class UserNotFoundError(CODIANException):
         )
 
 
-class AssistantNotFoundError(CODIANException):
+class AssistantNotFoundError(StaffPilotException):
     """Assistant not found"""
     def __init__(self, assistant_id: str):
         super().__init__(
@@ -39,7 +39,7 @@ class AssistantNotFoundError(CODIANException):
         )
 
 
-class ConversationNotFoundError(CODIANException):
+class ConversationNotFoundError(StaffPilotException):
     """Conversation not found"""
     def __init__(self, conversation_id: str):
         super().__init__(
@@ -48,7 +48,7 @@ class ConversationNotFoundError(CODIANException):
         )
 
 
-class DocumentNotFoundError(CODIANException):
+class DocumentNotFoundError(StaffPilotException):
     """Document not found"""
     def __init__(self, document_id: str):
         super().__init__(
@@ -57,25 +57,25 @@ class DocumentNotFoundError(CODIANException):
         )
 
 
-class UnauthorizedError(CODIANException):
+class UnauthorizedError(StaffPilotException):
     """Unauthorized access"""
     def __init__(self, message: str = "Unauthorized"):
         super().__init__(message, status_code=401)
 
 
-class ForbiddenError(CODIANException):
+class ForbiddenError(StaffPilotException):
     """Forbidden access"""
     def __init__(self, message: str = "Forbidden"):
         super().__init__(message, status_code=403)
 
 
-class ValidationError(CODIANException):
+class ValidationError(StaffPilotException):
     """Validation error"""
     def __init__(self, message: str):
         super().__init__(message, status_code=400)
 
 
-class StorageError(CODIANException):
+class StorageError(StaffPilotException):
     """Storage operation error"""
     def __init__(self, message: str):
         super().__init__(message, status_code=500)

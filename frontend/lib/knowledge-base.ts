@@ -1,4 +1,4 @@
-export const CODIAN_KNOWLEDGE_BASE = `
+export const STAFFPILOT_KNOWLEDGE_BASE = `
 # StaffPilot Knowledge Base
 
 ## Overview

@@ -148,6 +148,60 @@ async def get_integration(
     return SocialIntegrationResponse.from_orm(integration)
 
 
+@router.get("/{integration_id}/oauth1/init-url")
+async def get_oauth1_init_url(
+    integration_id: UUID,
+    current_tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get OAuth 1.0a initialization URL for Twitter integration.
+    This endpoint returns the URL that the UI should redirect to for OAuth 1.0a flow.
+    Only available for Twitter integrations that have completed OAuth 2.0.
+    """
+    service = IntegrationService(db)
+    integration = await service.get_integration(
+        tenant_id=current_tenant.id,
+        integration_id=integration_id
+    )
+    
+    if integration.platform != "twitter":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OAuth 1.0a is only available for Twitter integrations"
+        )
+    
+    if not integration.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Integration is not active"
+        )
+    
+    # Check if OAuth 1.0a is already configured
+    meta_data = integration.meta_data or {}
+    oauth1_configured = meta_data.get("oauth1_configured", False) or bool(
+        meta_data.get("oauth1_token") and meta_data.get("oauth1_token_secret")
+    )
+    
+    if oauth1_configured:
+        return {
+            "oauth1_configured": True,
+            "message": "OAuth 1.0a is already configured for this integration",
+            "init_url": None
+        }
+    
+    # Return the OAuth 1.0a init URL
+    backend_url = settings.BACKEND_URL or 'http://localhost:8000'
+    init_url = f"{backend_url}/api/v1/integrations/oauth/twitter/oauth1/init"
+    
+    return {
+        "oauth1_configured": False,
+        "message": "OAuth 1.0a is required for media uploads. Click to complete authorization.",
+        "init_url": init_url,
+        "required_for": "media_uploads"
+    }
+
+
 @router.post("/{integration_id}/disconnect")
 async def disconnect_integration(
     integration_id: UUID,
@@ -397,7 +451,6 @@ async def init_oauth(
         # Use the legacy callback URL that's registered in Google OAuth app
         # This will redirect to the new endpoint via main.py
         backend_url = settings.BACKEND_URL or 'http://localhost:8000'
-        redirect_uri = settings.GOOGLE_REDIRECT_URI or f"{backend_url}/api/google-ads/auth/callback/"
         auth_url = (
             f"https://accounts.google.com/o/oauth2/v2/auth?"
             f"response_type=code&"
@@ -419,7 +472,6 @@ async def init_oauth(
         ]
         # For Google Analytics, use the new endpoint (or legacy if configured)
         backend_url = settings.BACKEND_URL or 'http://localhost:8000'
-        redirect_uri = settings.GOOGLE_REDIRECT_URI or f"{backend_url}/api/v1/integrations/oauth/google_analytics/callback"
         auth_url = (
             f"https://accounts.google.com/o/oauth2/v2/auth?"
             f"response_type=code&"
@@ -521,9 +573,16 @@ async def oauth_callback(
     
     try:
         # Exchange code for token (platform-specific)
-        access_token, refresh_token, token_expires_at, profile_data, pages, organizations = await _exchange_token(
+        token_result = await _exchange_token(
             platform, code, config, redirect_uri, state_data
         )
+        
+        # Unpack token result - handle both old format (6 items) and new format (7 items with refresh_token_expires_at)
+        if len(token_result) == 7:
+            access_token, refresh_token, token_expires_at, profile_data, pages, organizations, refresh_token_expires_at = token_result
+        else:
+            access_token, refresh_token, token_expires_at, profile_data, pages, organizations = token_result
+            refresh_token_expires_at = None
         
         # Create or update integration
         integration = await service.create_or_update_integration(
@@ -536,6 +595,7 @@ async def oauth_callback(
             connected_by=user_id,
             refresh_token=refresh_token,
             token_expires_at=token_expires_at,
+            refresh_token_expires_at=refresh_token_expires_at,
             pages=pages,
             organizations=organizations
         )
@@ -608,7 +668,7 @@ async def _exchange_token(
                 )
                 pages = pages_response.json().get("data", [])
                 
-                return access_token, None, token_expires_at, profile_data, pages, []
+                return access_token, None, token_expires_at, profile_data, pages, [], None
             
             else:  # Instagram
                 # Get Instagram Business Account
@@ -639,7 +699,7 @@ async def _exchange_token(
                 profile_data = ig_response.json()
                 profile_data["access_token"] = instagram_account["access_token"]
                 
-                return access_token, None, token_expires_at, profile_data, [], []
+                return access_token, None, token_expires_at, profile_data, [], [], None
         
         elif platform == "linkedin":
             # LinkedIn requires exact redirect_uri match
@@ -772,7 +832,7 @@ async def _exchange_token(
                         "is_organization": True
                     })
             
-            return access_token, None, token_expires_at, profile_data, [], organizations
+            return access_token, None, token_expires_at, profile_data, [], organizations, None
         
         elif platform == "twitter":
             code_verifier = state_data.get("code_verifier")
@@ -807,6 +867,18 @@ async def _exchange_token(
             # Calculate token expiry
             token_expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in) if expires_in else None
             
+            # Twitter refresh tokens last 6 months (approximately 180 days)
+            # Only set refresh_token_expires_at if Twitter provides it in the response
+            # Twitter doesn't provide refresh_token_expires_at, so we only set it if it exists in the response
+            refresh_token_expires_at = None
+            if refresh_token and 'refresh_token_expires_at' in token_data:
+                # Twitter provided it - use it (though Twitter typically doesn't provide this)
+                try:
+                    refresh_token_expires_at = datetime.fromisoformat(token_data['refresh_token_expires_at'].replace('Z', '+00:00'))
+                except (ValueError, AttributeError):
+                    # If parsing fails, don't set it
+                    refresh_token_expires_at = None
+            
             # Get profile
             profile_response = await client.get(
                 "https://api.twitter.com/2/users/me?user.fields=profile_image_url,name,username",
@@ -814,7 +886,7 @@ async def _exchange_token(
             )
             profile_data = profile_response.json()["data"]
             
-            return access_token, refresh_token, token_expires_at, profile_data, [], []
+            return access_token, refresh_token, token_expires_at, profile_data, [], refresh_token_expires_at
         
         elif platform == "tiktok":
             code_verifier = state_data.get("code_verifier")
@@ -851,15 +923,13 @@ async def _exchange_token(
             profile_data = profile_response.json()["data"]["user"]
             profile_data["open_id"] = token_data["open_id"]
             
-            return access_token, refresh_token, token_expires_at, profile_data, [], []
+            return access_token, refresh_token, token_expires_at, profile_data, [], None
         
         elif platform == "google_ads":
             # Google Ads OAuth token exchange
             # Use the same redirect_uri that was used in the authorization request
             # This should match what's registered in Google OAuth app
-            backend_url = settings.BACKEND_URL or 'http://localhost:8000'
-            redirect_uri = settings.GOOGLE_REDIRECT_URI or f"{backend_url}/api/google-ads/auth/callback/"
-            
+            backend_url = settings.BACKEND_URL or 'http://localhost:8000'            
             logger.info(f"Google Ads token exchange - redirect_uri: {redirect_uri}, code present: {bool(code)}")
             
             try:
@@ -1007,13 +1077,12 @@ async def _exchange_token(
                 logger.warning(f"Could not fetch Google Ads customer IDs: {str(e)}")
                 profile_data["has_google_ads_access"] = True
             
-            return access_token, refresh_token, token_expires_at, profile_data, [], organizations
+            return access_token, refresh_token, token_expires_at, profile_data, [], organizations, None
         
         elif platform == "google_analytics":
             # Google Analytics OAuth token exchange
             # For Google Analytics, we can use the new endpoint or legacy if configured
             backend_url = settings.BACKEND_URL or 'http://localhost:8000'
-            redirect_uri = settings.GOOGLE_REDIRECT_URI or f"{backend_url}/api/v1/integrations/oauth/google_analytics/callback"
             token_response = await client.post(
                 "https://oauth2.googleapis.com/token",
                 data={
@@ -1073,7 +1142,7 @@ async def _exchange_token(
             except Exception as e:
                 logger.warning(f"Could not fetch Google Analytics accounts: {str(e)}")
             
-            return access_token, refresh_token, token_expires_at, profile_data, [], organizations
+            return access_token, refresh_token, token_expires_at, profile_data, [], organizations, None
         
         elif platform == "meta_ads":
             # Meta Ads uses Facebook OAuth
@@ -1148,8 +1217,325 @@ async def _exchange_token(
             profile_data["ad_accounts"] = active_ad_accounts
             profile_data["pages"] = pages
             
-            return access_token, None, token_expires_at, profile_data, pages, active_ad_accounts
+            return access_token, None, token_expires_at, profile_data, pages, active_ad_accounts, None
         
         else:
             raise Exception(f"Unsupported platform: {platform}")
+
+
+# Twitter OAuth 1.0a endpoints for media uploads
+@router.get("/oauth/twitter/oauth1/init")
+async def init_twitter_oauth1(
+    redirect: bool = Query(False, description="If true, redirect directly. If false, return JSON with URL."),
+    current_user: User = Depends(get_current_user),
+    current_tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Initialize Twitter OAuth 1.0a flow to get tokens for media uploads.
+    Twitter's media upload endpoints require OAuth 1.0a, not OAuth 2.0.
+    User must have completed OAuth 2.0 flow first.
+    """
+    try:
+        try:
+            from requests_oauthlib import OAuth1Session
+        except ImportError:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="OAuth 1.0a library not installed. Install requests-oauthlib to enable media uploads."
+            )
+        
+        # Get OAuth 1.0a credentials from settings (separate from OAuth 2.0 credentials)
+        # These should be the API Key and API Secret from Twitter Developer Portal
+        api_key = settings.TWITTER_API_KEY
+        api_secret = settings.TWITTER_API_SECRET
+        
+        # Fallback to OAuth 2.0 credentials if OAuth 1.0a credentials not set
+        if not api_key or not api_secret:
+            logger.warning("[Twitter OAuth 1.0a] TWITTER_API_KEY or TWITTER_API_SECRET not set, falling back to OAuth 2.0 credentials")
+            service = IntegrationService(db)
+            config = await service.get_integration_config("twitter")
+            if config:
+                api_key = config.client_id
+                api_secret = config.client_secret
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Twitter OAuth 1.0a credentials not configured. Please set TWITTER_API_KEY and TWITTER_API_SECRET in .env file."
+                )
+        
+        if not api_key or not api_secret:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Twitter OAuth 1.0a credentials not configured. Please set TWITTER_API_KEY and TWITTER_API_SECRET in .env file."
+            )
+        
+        # Check if user has existing Twitter OAuth 2.0 integration
+        from app.models.integration import SocialIntegration
+        from sqlalchemy import select
+        
+        result = await db.execute(
+            select(SocialIntegration).where(
+                SocialIntegration.tenant_id == current_tenant.id,
+                SocialIntegration.platform == "twitter",
+                SocialIntegration.is_active == True
+            )
+        )
+        integration = result.scalar_one_or_none()
+        
+        if not integration:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Twitter account not found. Please connect with OAuth 2.0 first."
+            )
+        
+        # Step 1: Get request token
+        backend_url = settings.BACKEND_URL or 'http://localhost:8000'
+        oauth_callback = f"{backend_url}/api/v1/integrations/oauth/twitter/oauth1/callback"
+        
+        # Use OAuth 1.0a credentials (API Key and API Secret)
+        oauth1_session = OAuth1Session(
+            api_key,  # Consumer Key (API Key)
+            client_secret=api_secret  # Consumer Secret (API Secret)
+        )
+        
+        request_token_url = "https://api.twitter.com/oauth/request_token"
+        
+        # Log callback URL for debugging (don't log full credentials)
+        logger.info(f"[Twitter OAuth 1.0a] Using callback URL: {oauth_callback}")
+        logger.info(f"[Twitter OAuth 1.0a] Using API Key (first 10 chars): {api_key[:10] if api_key else 'None'}...")
+        
+        try:
+            # Fetch request token with callback
+            # IMPORTANT: The callback URL must be registered in Twitter Developer Portal:
+            # 1. Go to https://developer.twitter.com/en/portal/dashboard
+            # 2. Select your app
+            # 3. Go to Settings > User authentication settings
+            # 4. Add the callback URL to "Callback URI / Redirect URL"
+            # 5. Ensure "App permissions" is set to "Read and write"
+            # 6. Save changes
+            fetch_response = oauth1_session.fetch_request_token(
+                request_token_url,
+                data={'oauth_callback': oauth_callback}
+            )
+            
+            oauth_token = fetch_response.get('oauth_token')
+            oauth_token_secret = fetch_response.get('oauth_token_secret')
+            
+            if not oauth_token or not oauth_token_secret:
+                logger.error("[Twitter OAuth 1.0a] Failed to get request tokens")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to get OAuth 1.0a request tokens"
+                )
+            
+            # Store request tokens in Redis
+            oauth1_state_key = f"twitter_oauth1_{oauth_token}"
+            oauth1_cache_data = {
+                "user_id": str(current_user.id),
+                "tenant_id": str(current_tenant.id),
+                "integration_id": str(integration.id),
+                "oauth_token_secret": oauth_token_secret,
+                "created_at": datetime.now(timezone.utc).isoformat()
+            }
+            
+            redis_client = get_redis_client()
+            if redis_client:
+                redis_client.setex(
+                    oauth1_state_key,
+                    600,  # 10 minutes
+                    json.dumps(oauth1_cache_data)
+                )
+            
+            # Step 2: Get authorization URL
+            authorization_url = oauth1_session.authorization_url("https://api.twitter.com/oauth/authorize")
+            
+            logger.info(f"[Twitter OAuth 1.0a] Request token obtained, authorization URL: {authorization_url}")
+            
+            # If redirect parameter is true, redirect directly (for direct browser navigation)
+            # Otherwise, return JSON with URL (for API calls)
+            if redirect:
+                return RedirectResponse(url=authorization_url)
+            else:
+                return JSONResponse(content={"url": authorization_url})
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"[Twitter OAuth 1.0a] Error getting request token: {error_msg}", exc_info=True)
+            
+            # Check if it's an authentication error (401)
+            if "401" in error_msg or "Could not authenticate" in error_msg or "code 32" in error_msg:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Twitter OAuth 1.0a authentication failed. "
+                        f"This usually means:\n"
+                        f"1. The callback URL '{oauth_callback}' is not registered in your Twitter app settings.\n"
+                        f"2. Go to Twitter Developer Portal > Your App > Settings > User authentication settings\n"
+                        f"3. Add '{oauth_callback}' to 'Callback URI / Redirect URL'\n"
+                        f"4. Ensure 'App permissions' includes 'Read and write' for OAuth 1.0a\n"
+                        f"5. Save changes and try again.\n\n"
+                        f"Original error: {error_msg}"
+                    )
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to initiate OAuth 1.0a flow: {error_msg}"
+                )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[Twitter OAuth 1.0a] Error in init: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"OAuth 1.0a initialization failed: {str(e)}"
+        )
+
+
+@router.get("/oauth/twitter/oauth1/callback")
+async def twitter_oauth1_callback(
+    oauth_token: Optional[str] = Query(None),
+    oauth_verifier: Optional[str] = Query(None),
+    denied: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Handle Twitter OAuth 1.0a callback to get access tokens for media uploads.
+    """
+    frontend_url = settings.FRONTEND_URL or 'http://localhost:3000'
+    
+    if denied:
+        logger.warning("[Twitter OAuth 1.0a] User denied authorization")
+        return RedirectResponse(
+            url=f"{frontend_url}/dashboard/integrations?success=false&error=OAuth 1.0a authorization denied"
+        )
+    
+    if not oauth_token or not oauth_verifier:
+        return RedirectResponse(
+            url=f"{frontend_url}/dashboard/integrations?success=false&error=Missing oauth_token or oauth_verifier"
+        )
+    
+    try:
+        try:
+            from requests_oauthlib import OAuth1Session
+        except ImportError:
+            return RedirectResponse(
+                url=f"{frontend_url}/dashboard/integrations?success=false&error=OAuth 1.0a library not installed"
+            )
+        
+        # Get cached data
+        redis_client = get_redis_client()
+        oauth1_state_key = f"twitter_oauth1_{oauth_token}"
+        
+        if not redis_client:
+            return RedirectResponse(
+                url=f"{frontend_url}/dashboard/integrations?success=false&error=Redis not available"
+            )
+        
+        cached_data_str = redis_client.get(oauth1_state_key)
+        if not cached_data_str:
+            return RedirectResponse(
+                url=f"{frontend_url}/dashboard/integrations?success=false&error=Invalid or expired OAuth 1.0a request"
+            )
+        
+        oauth1_data = json.loads(cached_data_str)
+        integration_id = oauth1_data.get('integration_id')
+        oauth_token_secret = oauth1_data.get('oauth_token_secret')
+        
+        # Get integration
+        from app.models.integration import SocialIntegration
+        from sqlalchemy import select
+        from uuid import UUID
+        
+        result = await db.execute(
+            select(SocialIntegration).where(
+                SocialIntegration.id == UUID(integration_id) if isinstance(integration_id, str) else integration_id
+            )
+        )
+        integration = result.scalar_one_or_none()
+        
+        if not integration:
+            return RedirectResponse(
+                url=f"{frontend_url}/dashboard/integrations?success=false&error=Integration not found"
+            )
+        
+        # Get OAuth 1.0a credentials from settings
+        api_key = settings.TWITTER_API_KEY
+        api_secret = settings.TWITTER_API_SECRET
+        
+        # Fallback to OAuth 2.0 credentials if OAuth 1.0a credentials not set
+        if not api_key or not api_secret:
+            logger.warning("[Twitter OAuth 1.0a] TWITTER_API_KEY or TWITTER_API_SECRET not set, falling back to OAuth 2.0 credentials")
+            service = IntegrationService(db)
+            config = await service.get_integration_config("twitter")
+            if config:
+                api_key = config.client_id
+                api_secret = config.client_secret
+            else:
+                return RedirectResponse(
+                    url=f"{frontend_url}/dashboard/integrations?success=false&error=Twitter OAuth 1.0a credentials not configured"
+                )
+        
+        if not api_key or not api_secret:
+            return RedirectResponse(
+                url=f"{frontend_url}/dashboard/integrations?success=false&error=Twitter OAuth 1.0a credentials not configured"
+            )
+        
+        # Step 3: Exchange request token for access token
+        oauth1_session = OAuth1Session(
+            api_key,
+            client_secret=api_secret,
+            resource_owner_key=oauth_token,
+            resource_owner_secret=oauth_token_secret,
+            verifier=oauth_verifier
+        )
+        
+        access_token_url = "https://api.twitter.com/oauth/access_token"
+        oauth_tokens = oauth1_session.fetch_access_token(access_token_url)
+        
+        oauth1_access_token = oauth_tokens.get('oauth_token')
+        oauth1_access_token_secret = oauth_tokens.get('oauth_token_secret')
+        
+        if not oauth1_access_token or not oauth1_access_token_secret:
+            logger.error("[Twitter OAuth 1.0a] Failed to get access tokens")
+            return RedirectResponse(
+                url=f"{frontend_url}/dashboard/integrations?success=false&error=Failed to get OAuth 1.0a access tokens"
+            )
+        
+        # Store OAuth 1.0a tokens in integration meta_data
+        meta_data = integration.meta_data or {}
+        meta_data.update({
+            'oauth1_token': oauth1_access_token,
+            'oauth1_token_secret': oauth1_access_token_secret,
+            'oauth1_configured': True,
+            'oauth1_configured_at': datetime.now(timezone.utc).isoformat()
+        })
+        
+        # Update integration
+        from sqlalchemy import update
+        update_stmt = (
+            update(SocialIntegration)
+            .where(SocialIntegration.id == integration.id)
+            .values(meta_data=meta_data)
+        )
+        await db.execute(update_stmt)
+        await db.commit()
+        
+        # Clean up cache
+        redis_client.delete(oauth1_state_key)
+        
+        logger.info(f"[Twitter OAuth 1.0a] Access tokens obtained and stored for integration {integration_id}")
+        return RedirectResponse(
+            url=f"{frontend_url}/dashboard/integrations?success=true&platform=twitter&oauth1=complete"
+        )
+        
+    except Exception as e:
+        logger.error(f"[Twitter OAuth 1.0a] Error in callback: {str(e)}", exc_info=True)
+        return RedirectResponse(
+            url=f"{frontend_url}/dashboard/integrations?success=false&error=OAuth 1.0a callback failed: {str(e)}"
+        )
 

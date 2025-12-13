@@ -4,7 +4,7 @@ Simple logging configuration
 import logging
 
 
-def setup_logger(name: str = "codian") -> logging.Logger:
+def setup_logger(name: str = "staffpilot") -> logging.Logger:
     """Setup simple logger"""
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO)

@@ -8,43 +8,44 @@ import asyncio
 from typing import Dict, Any, List, Optional
 
 
-async def _retrieve_rag_context_async(
+def _retrieve_rag_context_sync(
     tenant_id: str,
     assistant_id: str,
     query: str,
     limit: int = 5
 ) -> Dict[str, Any]:
     """
-    Async helper function to retrieve RAG context.
-    Can be called directly from async contexts.
-    Creates an async session for RAG operations (needed for async DB queries).
+    Sync helper function to retrieve RAG context.
+    Uses sync session for RAG operations.
     """
-    from app.db.session import get_async_session_local
+    from app.db.session import create_worker_session_factory
     from app.services.rag_service import RAGService
     
-    # Create an async session for RAG operations (RAGService needs async session)
-    async_session_factory = get_async_session_local()
-    async with async_session_factory() as db:
-        try:
-            rag_service = RAGService(db, UUID(tenant_id))
-            chunks = await rag_service.retrieve_relevant_context(
-                query=query,
-                limit=limit,
-                assistant_id=UUID(assistant_id) if assistant_id else None
-            )
-            return {
-                "success": True,
-                "chunks": chunks,
-                "count": len(chunks)
-            }
-        except Exception as e:
-            logger.error(f"RAG retrieval error in async helper: {str(e)}", exc_info=True)
-            return {
-                "success": False,
-                "chunks": [],
-                "count": 0,
-                "error": str(e)
-            }
+    # Create a sync session for RAG operations
+    SessionFactory = create_worker_session_factory()
+    db = SessionFactory()
+    try:
+        rag_service = RAGService(db, UUID(tenant_id))
+        chunks = rag_service.retrieve_relevant_context(
+            query=query,
+            limit=limit,
+            assistant_id=UUID(assistant_id) if assistant_id else None
+        )
+        return {
+            "success": True,
+            "chunks": chunks,
+            "count": len(chunks)
+        }
+    except Exception as e:
+        logger.error(f"RAG retrieval error in sync helper: {str(e)}", exc_info=True)
+        return {
+            "success": False,
+            "chunks": [],
+            "count": 0,
+            "error": str(e)
+        }
+    finally:
+        db.close()
 
 
 @celery_app.task(name="rag.retrieve_context", bind=True, max_retries=3)
@@ -68,17 +69,60 @@ def retrieve_rag_context(
         Dictionary with context chunks
     """
     try:
-        # Use asyncio.run() which properly manages the event loop lifecycle
-        chunks_result = asyncio.run(
-            _retrieve_rag_context_async(tenant_id, assistant_id, query, limit)
-        )
-        
+        chunks_result = _retrieve_rag_context_sync(tenant_id, assistant_id, query, limit)
         return chunks_result
     
     except Exception as e:
         logger.error(f"RAG retrieval failed: {str(e)}")
         # Retry on failure
         raise self.retry(exc=e, countdown=60)
+
+
+def _generate_image_prompt(
+    platform: str,
+    content: str
+) -> str:
+    """
+    Generate image prompt in the format: 
+    "Generate a suitable image to post along with below content in [platform] -- [content]"
+    
+    Args:
+        platform: Social media platform name (e.g., "LinkedIn", "Twitter", "Facebook")
+        content: The generated social media content
+    
+    Returns:
+        Formatted image prompt string
+    """
+    # Format: "Generate a suitable image to post along with below content in [platform] -- [content]"
+    image_prompt = f"Generate a suitable image to post along with below content in {platform} -- {content}"
+    return image_prompt
+
+
+def _generate_video_prompt(
+    platform: str,
+    content: str
+) -> str:
+    """
+    Generate a storytelling, film-like short ad prompt tied to the social content.
+    Format:
+    "Create a short, cinematic, story-driven ad for [platform], based on this post. 
+    Make it intriguing with a hook and a cliffhanger so viewers want to know what happens next. 
+    Keep it tightly aligned to the post content. -- [content]"
+    
+    Args:
+        platform: Social media platform name (e.g., "LinkedIn", "Twitter", "Facebook")
+        content: The generated social media content
+    
+    Returns:
+        Formatted video prompt string
+    """
+    video_prompt = (
+        "Create a short, cinematic, story-driven ad for "
+        f"{platform}. Base it on this post so the visuals and narrative stay aligned. "
+        "Open with a strong hook, build intrigue, and end on a cliffhanger that makes viewers want to know what happens next. "
+        f"Here is the post to align with: {content}"
+    )
+    return video_prompt
 
 
 async def _generate_image_async(
@@ -320,11 +364,14 @@ IMPORTANT: Generate ONE single, final post that is ready to publish immediately.
         # Get LLM service and generate content (async, handle event loop properly)
         async def _generate():
             llm_service = create_llm_service()
+            # Increase max_tokens for LinkedIn (longer posts) and other platforms
+            # LinkedIn posts can be 150-300 words, so we need more tokens
+            max_tokens = 2000 if platform == "linkedin" else 1500
             result = await llm_service.generate_content(
                 prompt=user_prompt,
                 system_instruction=system_prompt,
                 temperature=0.7,
-                max_tokens=1000
+                max_tokens=max_tokens
             )
             # Ensure we return a string, not a coroutine
             if isinstance(result, str):
@@ -679,7 +726,14 @@ async def _post_to_social_platform_async(
             if integration:
                 refresh_token = integration.refresh_token
                 token_expires_at = integration.token_expires_at
+                refresh_token_expires_at = integration.refresh_token_expires_at
                 integration_id = str(integration.id)
+                
+                # Log refresh token info for debugging
+                if refresh_token:
+                    logger.debug(f"[{platform}] Refresh token present (length: {len(refresh_token)}, first 20 chars: {refresh_token[:20]}...)")
+                else:
+                    logger.warning(f"[{platform}] Refresh token is None or empty in integration {integration_id}")
                 
                 # Get OAuth config
                 try:
@@ -703,6 +757,7 @@ async def _post_to_social_platform_async(
                 client_id=client_id,
                 client_secret=client_secret,
                 token_expires_at=token_expires_at,
+                refresh_token_expires_at=refresh_token_expires_at,
                 integration_id=integration_id,
                 db_session=db_session
             )
@@ -901,14 +956,12 @@ def execute_content_creation(
                 logger.info("=" * 80)
                 
                 logger.info("[TASK 1/6] Starting RAG retrieval...")
-                # RAG retrieval is async (uses LLM service), so use asyncio.run()
-                rag_result = asyncio.run(
-                    _retrieve_rag_context_async(
-                        tenant_id=tenant_id,
-                        assistant_id=assistant_id,
-                        query=user_request,
-                        limit=10  # Increased from 5 to 10 for better retrieval
-                    )
+                # RAG retrieval uses sync sessions
+                rag_result = _retrieve_rag_context_sync(
+                    tenant_id=tenant_id,
+                    assistant_id=assistant_id,
+                    query=user_request,
+                    limit=10  # Increased from 5 to 10 for better retrieval
                 )
                 
                 context = ""
@@ -1080,12 +1133,31 @@ def execute_content_creation(
                 if include_images:
                     logger.info("[TASK 4/6] Generating images...")
                     try:
-                        # Use the first platform's content for image generation prompt
-                        image_prompt = user_request
+                        # Get the first platform and its content for image generation
+                        first_platform = platforms[0] if platforms else "social media"
+                        first_platform_content = None
                         if platform_contents:
-                            first_platform_content = next(iter(platform_contents.values()), "")
-                            if first_platform_content:
-                                image_prompt = first_platform_content[:200]  # Use first 200 chars of generated content
+                            # Get content for the first platform
+                            first_platform_content = platform_contents.get(first_platform, "")
+                            if not first_platform_content:
+                                # Fallback to first available content
+                                first_platform_content = next(iter(platform_contents.values()), "")
+                        
+                        # Format platform name nicely (capitalize first letter)
+                        platform_name = first_platform.capitalize() if first_platform else "Social media"
+                        
+                        # Generate image prompt in the format: 
+                        # "Generate a suitable image to post along with below content in [platform] -- [content]"
+                        if first_platform_content:
+                            image_prompt = _generate_image_prompt(
+                                platform=platform_name,
+                                content=first_platform_content
+                            )
+                        else:
+                            # Fallback if no content generated yet
+                            image_prompt = f"Generate a suitable image to post along with below content in {platform_name} -- {user_request}"
+                        
+                        logger.info(f"[TASK 4/6] Generated image prompt: {image_prompt[:200]}...")
                         
                         # Image generation is async (uses LLM), so use asyncio.run()
                         image_result = asyncio.run(
@@ -1139,12 +1211,23 @@ def execute_content_creation(
                 if include_video:
                     logger.info("[TASK 4/6] Generating video...")
                     try:
-                        # Use the first platform's content for video generation prompt
-                        video_prompt = user_request
+                        # Generate video prompt in the format: 
+                        # "Generate a suitable video to post along with below content in [platform] -- [content]"
+                        first_platform = platforms[0] if platforms else "social media"
+                        first_platform_content = None
                         if platform_contents:
                             first_platform_content = next(iter(platform_contents.values()), "")
-                            if first_platform_content:
-                                video_prompt = first_platform_content[:200]  # Use first 200 chars of generated content
+                        
+                        if first_platform_content:
+                            video_prompt = _generate_video_prompt(
+                                platform=first_platform,
+                                content=first_platform_content
+                            )
+                        else:
+                            # Fallback if no content generated yet
+                            video_prompt = f"Generate a suitable video to post along with below content in {first_platform} -- {user_request}"
+                        
+                        logger.info(f"[TASK 4/6] Generated video prompt: {video_prompt[:200]}...")
                         
                         # Video generation is async (uses LLM), so use asyncio.run()
                         video_result = asyncio.run(

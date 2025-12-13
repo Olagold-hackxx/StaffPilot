@@ -49,8 +49,8 @@ def process_document(self, document_id: str):
             SessionFactory = create_worker_session_factory()
             db = SessionFactory()
             try:
-                # Get document
-                result = await db.execute(
+                # Get document (sync DB call)
+                result = db.execute(
                     select(Document).where(Document.id == UUID(document_id))
                 )
                 document = result.scalar_one_or_none()
@@ -63,7 +63,7 @@ def process_document(self, document_id: str):
                 document.status = DocumentStatus.PROCESSING
                 # Note: processing_started_at field may not exist in model
                 # If it does, uncomment: document.processing_started_at = datetime.now(timezone.utc)
-                await db.commit()
+                db.commit()
                 
                 try:
                     # Step 1: Download document from storage
@@ -137,8 +137,8 @@ def process_document(self, document_id: str):
                         "vector_store": "chromadb"
                     }
                     
-                    await db.commit()
-                    await db.refresh(document)
+                    db.commit()
+                    db.refresh(document)
                     
                     logger.info(f"Document {document_id} processing completed: {len(chunks)} chunks, {len(chunk_embeddings)} embeddings stored in ChromaDB")
                     
@@ -153,10 +153,10 @@ def process_document(self, document_id: str):
                     logger.error(f"Error processing document {document_id}: {str(e)}")
                     document.status = DocumentStatus.FAILED
                     document.processing_error = str(e)
-                    await db.commit()
+                    db.commit()
                     raise
             finally:
-                await db.close()
+                db.close()
         
         result = loop.run_until_complete(_process())
         loop.close()

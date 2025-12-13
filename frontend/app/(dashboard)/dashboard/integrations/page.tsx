@@ -45,6 +45,7 @@ interface IntegrationDetails {
   pages?: Array<Record<string, unknown>>
   organizations?: Array<Record<string, unknown>>
   default_page_id?: string
+  oauth1_configured?: boolean  // For Twitter: whether OAuth 1.0a is configured for media uploads
   is_active: boolean
   is_verified: boolean
   created_at: string
@@ -274,6 +275,8 @@ export default function IntegrationsPage() {
   const [selectedIntegration, setSelectedIntegration] = useState<IntegrationDetails | null>(null)
   const [integrationDetails, setIntegrationDetails] = useState<IntegrationDetails | null>(null)
   const [loadingDetails, setLoadingDetails] = useState(false)
+  const [oauth1Status, setOauth1Status] = useState<{ oauth1_configured: boolean; init_url?: string; message: string } | null>(null)
+  const [loadingOAuth1, setLoadingOAuth1] = useState(false)
 
   useEffect(() => {
     loadAssistants()
@@ -281,6 +284,51 @@ export default function IntegrationsPage() {
       loadCapabilityRequirements()
     }
   }, [capabilityId])
+
+  useEffect(() => {
+    // Check for OAuth 1.0 callback
+    const success = searchParams.get('success')
+    const oauth1 = searchParams.get('oauth1')
+    const platform = searchParams.get('platform')
+    const error = searchParams.get('error')
+    
+    if (success === 'true' && oauth1 === 'complete' && platform === 'twitter') {
+      toast({
+        title: "Success",
+        description: "Twitter media upload authorization completed! You can now upload images with your posts.",
+      })
+      // Reload statuses to update integration
+      if (selectedAssistant) {
+        loadStatuses()
+      }
+      // Reload integration details if modal is open
+      if (integrationDetails?.id && integrationDetails.platform === 'twitter') {
+        // Reload the integration details
+        apiClient.getIntegration(integrationDetails.id).then((details) => {
+          setIntegrationDetails(details as IntegrationDetails)
+          // Reload OAuth 1.0 status
+          apiClient.getOAuth1InitUrl(integrationDetails.id).then((oauth1Data) => {
+            setOauth1Status(oauth1Data)
+          }).catch(() => {
+            setOauth1Status(null)
+          })
+        }).catch(() => {
+          // Silently fail
+        })
+      }
+      // Clear URL parameters
+      window.history.replaceState({}, '', window.location.pathname)
+    } else if (success === 'false' || error) {
+      const errorMsg = error || 'Authorization failed'
+      toast({
+        title: "Authorization Failed",
+        description: decodeURIComponent(errorMsg),
+        variant: "destructive",
+      })
+      // Clear URL parameters
+      window.history.replaceState({}, '', window.location.pathname)
+    }
+  }, [searchParams, selectedAssistant, integrationDetails])
 
   useEffect(() => {
     if (selectedAssistant) {
@@ -422,6 +470,19 @@ export default function IntegrationsPage() {
     try {
       const details = await apiClient.getIntegration(status.integration_id) as IntegrationDetails
       setIntegrationDetails(details)
+      
+      // Check OAuth 1.0 status for Twitter integrations
+      if (details.platform === "twitter") {
+        try {
+          const oauth1Data = await apiClient.getOAuth1InitUrl(status.integration_id)
+          setOauth1Status(oauth1Data)
+        } catch (error) {
+          console.error("Failed to load OAuth 1.0 status:", error)
+          setOauth1Status(null)
+        }
+      } else {
+        setOauth1Status(null)
+      }
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : "Failed to load integration details"
       toast({
@@ -432,6 +493,26 @@ export default function IntegrationsPage() {
       setIntegrationDetails(null)
     } finally {
       setLoadingDetails(false)
+    }
+  }
+
+  async function handleOAuth1Init() {
+    if (!integrationDetails?.id) return
+
+    setLoadingOAuth1(true)
+    try {
+      // Get OAuth 1.0 authorization URL via authenticated API call
+      const authUrl = await apiClient.getOAuth1AuthorizationUrl()
+      // Redirect to Twitter authorization page
+      window.location.href = authUrl
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : "Failed to initiate OAuth 1.0"
+      toast({
+        title: "Error",
+        description: errorMessage,
+        variant: "destructive",
+      })
+      setLoadingOAuth1(false)
     }
   }
 
@@ -776,6 +857,63 @@ export default function IntegrationsPage() {
               </div>
 
               <Separator />
+
+              {/* OAuth 1.0 Status for Twitter */}
+              {integrationDetails.platform === "twitter" && (
+                <>
+                  <div className="space-y-3">
+                    <h3 className="font-semibold text-sm uppercase tracking-wide text-muted-foreground">
+                      Media Upload Authorization
+                    </h3>
+                    {loadingOAuth1 ? (
+                      <div className="flex items-center justify-center py-4">
+                        <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
+                      </div>
+                    ) : oauth1Status && !oauth1Status.oauth1_configured ? (
+                      <div className="p-4 rounded-lg border border-orange-500/50 bg-orange-500/5">
+                        <div className="flex items-start gap-3">
+                          <AlertCircle className="h-5 w-5 text-orange-500 flex-shrink-0 mt-0.5" />
+                          <div className="flex-1 space-y-2">
+                            <div>
+                              <p className="text-sm font-medium text-orange-600 dark:text-orange-400">
+                                Media Upload Authorization Required
+                              </p>
+                              <p className="text-xs text-muted-foreground mt-1">
+                                To upload images with your Twitter posts, you need to complete an additional authorization step.
+                                This is required because Twitter's media upload endpoints use OAuth 1.0a authentication.
+                              </p>
+                            </div>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={handleOAuth1Init}
+                              className="mt-2"
+                            >
+                              <ExternalLink className="h-3 w-3 mr-2" />
+                              Authorize Media Uploads
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    ) : integrationDetails.oauth1_configured ? (
+                      <div className="p-4 rounded-lg border border-green-500/50 bg-green-500/5">
+                        <div className="flex items-center gap-3">
+                          <CheckCircle2 className="h-5 w-5 text-green-500" />
+                          <div>
+                            <p className="text-sm font-medium text-green-600 dark:text-green-400">
+                              Media Uploads Enabled
+                            </p>
+                            <p className="text-xs text-muted-foreground mt-1">
+                              You can upload images with your Twitter posts.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                  <Separator />
+                </>
+              )}
 
               {/* Connection Details */}
               <div className="space-y-3">

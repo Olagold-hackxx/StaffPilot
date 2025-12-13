@@ -78,47 +78,6 @@ def get_engine() -> AsyncEngine:
                 )
     return _engine
 
-def _create_worker_engine_internal() -> AsyncEngine:
-    """
-    Internal function to create worker engine without lock (caller must hold lock).
-    """
-    connect_args = {}
-    ssl_context = _get_ssl_context()
-    if ssl_context:
-        connect_args["ssl"] = ssl_context
-    
-    # Add timeout settings for asyncpg
-    connect_args["command_timeout"] = 30
-    connect_args.setdefault("server_settings", {})
-    
-    # Calculate pool size based on worker concurrency
-    # Default: 4 concurrent tasks per worker
-    # Production: Can scale to 8-16 workers with 4-8 concurrency each
-    import os
-    worker_concurrency = int(os.environ.get("CELERY_WORKER_CONCURRENCY", "4"))
-    
-    # Pool size = concurrency + buffer
-    # This ensures each concurrent task can get a connection
-    pool_size = worker_concurrency + 2  # Buffer for safety
-    max_overflow = max(2, worker_concurrency // 2)  # 50% overflow for spikes
-    
-    # Production-ready settings:
-    # - Short timeout prevents blocking (5 seconds)
-    # - Pre-ping disabled for Celery workers to avoid event loop issues
-    #   (connections are bound to event loops, and asyncio.run() creates new loops)
-    # - Pool recycle prevents stale connections
-    engine = create_async_engine(
-        settings.DATABASE_URL,
-        echo=settings.DATABASE_ECHO,
-        future=True,
-        pool_size=pool_size,
-        max_overflow=max_overflow,
-        pool_pre_ping=False,  # Disabled to avoid event loop issues with asyncio.run()
-        pool_recycle=3600,  # Recycle connections after 1 hour
-        pool_timeout=5,  # Short timeout: fail fast if pool is exhausted (5 seconds)
-        connect_args=connect_args,
-    )
-    return engine
 
 def get_worker_engine() -> AsyncEngine:
     """
@@ -153,7 +112,7 @@ def create_worker_session_factory():
     This is much simpler than async:
     - No event loop issues
     - No asyncio.run() needed for database operations
-    - Standard SQLAlchemy sync sessions
+    - Standard SQLAlchemy sync sessions 
     - Can share engine across tasks in same worker process
     """
     global _worker_sync_session_factory, _worker_sync_engine

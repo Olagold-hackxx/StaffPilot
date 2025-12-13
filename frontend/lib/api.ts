@@ -1,5 +1,5 @@
 /**
- * API client for CODIAN backend
+ * API client for StaffPilot backend
  */
 import type { AuthUser } from './auth';
 
@@ -412,6 +412,18 @@ class ApiClient {
     });
   }
 
+  async getOAuth1InitUrl(integrationId: string): Promise<{ oauth1_configured: boolean; init_url?: string; message: string; required_for?: string }> {
+    return this.request(`/integrations/${integrationId}/oauth1/init-url`);
+  }
+
+  async getOAuth1AuthorizationUrl(): Promise<string> {
+    const response = await this.request<{ url: string }>('/integrations/oauth/twitter/oauth1/init?redirect=false');
+    if (response.url) {
+      return response.url;
+    }
+    throw new Error('Failed to get OAuth 1.0 authorization URL');
+  }
+
   async getOAuthInitUrl(platform: string, assistantId?: string): Promise<string> {
     const params = new URLSearchParams();
     if (assistantId) params.append('assistant_id', assistantId);
@@ -616,6 +628,94 @@ class ApiClient {
     return this.request(`/campaigns/${campaignId}/approve`, {
       method: 'POST',
     });
+  }
+
+  async createCampaign(data: {
+    name: string;
+    description?: string;
+    objective_type?: 'conversions' | 'traffic' | 'awareness' | 'leads';
+    start_date?: string;
+    end_date?: string;
+    total_budget?: number;
+    currency?: string;
+    channels: string[];
+    product_brief?: string;
+    creative_preference?: 'image' | 'video' | 'both';
+    target_audience?: {
+      countries?: string[];
+      age_range?: [number, number];
+      interests?: string[];
+      gender?: 'all' | 'male' | 'female';
+    };
+    goal_metrics?: {
+      target_cpa?: number;
+      target_roas?: number;
+      conversion_count?: number;
+    };
+  }) {
+    return this.request('/campaigns', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async generateCampaignPlan(campaignId: string, regenerate: boolean = false) {
+    return this.request(`/campaigns/${campaignId}/generate-plan`, {
+      method: 'POST',
+      body: JSON.stringify({ regenerate }),
+    });
+  }
+
+  async updatePlanStepStatus(campaignId: string, stepId: string, status: 'pending' | 'in_progress' | 'completed') {
+    return this.request(`/campaigns/${campaignId}/plan/steps/${stepId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    });
+  }
+
+  async campaignChat(campaignId: string, message: string, history?: any[]) {
+    return this.request<{ response: string }>(`/campaigns/${campaignId}/chat`, {
+      method: 'POST',
+      body: JSON.stringify({ message, history }),
+    });
+  }
+
+  async generateCampaignAssets(campaignId: string, stepIds?: string[]) {
+    return this.request<{ assets: any[], status: string }>(`/campaigns/${campaignId}/assets/generate`, {
+      method: 'POST',
+      body: JSON.stringify({ step_ids: stepIds }),
+    });
+  }
+
+  async executeStep(campaignId: string, stepId: string, forceTaskType?: string) {
+    return this.request<{
+      campaign_id: string;
+      step_id: string;
+      execution_id: string;
+      task_type: string;
+      status: string;
+      message: string;
+    }>(`/campaigns/${campaignId}/steps/${stepId}/execute`, {
+      method: 'POST',
+      body: JSON.stringify({ force_task_type: forceTaskType }),
+    });
+  }
+
+  async getStepResult(campaignId: string, stepId: string) {
+    return this.request<{
+      campaign_id: string;
+      step_id: string;
+      status: string;
+      result?: {
+        content?: string;
+        image_urls?: string[];
+        video_urls?: string[];
+        research_data?: any;
+        executed_at?: string;
+        error?: string;
+      };
+      error?: string;
+    }>(`/campaigns/${campaignId}/steps/${stepId}/result`);
   }
 
   // Analytics endpoints

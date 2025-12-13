@@ -1,5 +1,5 @@
 import { GoogleGenerativeAI } from '@google/generative-ai'
-import { CODIAN_KNOWLEDGE_BASE } from '@/lib/knowledge-base'
+import { STAFFPILOT_KNOWLEDGE_BASE } from '@/lib/knowledge-base'
 
 export const maxDuration = 30
 
@@ -38,7 +38,7 @@ export async function POST(req: Request) {
     // Create the system prompt with knowledge base
     const systemPrompt = `You are StaffPilot's AI assistant - a knowledgeable, friendly, and professional guide that helps visitors understand our AI employees, pricing, and how to get started.
 
-${CODIAN_KNOWLEDGE_BASE}
+${STAFFPILOT_KNOWLEDGE_BASE}
 
 Instructions:
 - Always be helpful, accurate, and professional

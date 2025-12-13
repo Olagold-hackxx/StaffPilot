@@ -12,7 +12,7 @@ export default function PrivacyPage() {
             <section className="mb-12">
               <h2 className="mb-4 text-2xl font-bold">Introduction</h2>
               <p className="mb-4 leading-relaxed text-muted-foreground">
-                At CODIAN, we take your privacy seriously. This Privacy Policy explains how we collect, use, disclose,
+                At StaffPilot, we take your privacy seriously. This Privacy Policy explains how we collect, use, disclose,
                 and safeguard your information when you use our AI consultant and management services.
               </p>
             </section>
@@ -76,7 +76,7 @@ export default function PrivacyPage() {
               <p className="mb-4 leading-relaxed text-muted-foreground">
                 We retain your personal information for as long as necessary to provide our services and fulfill the
                 purposes outlined in this policy. You may request deletion of your data at any time by contacting us at
-                privacy@codian.ai.
+                privacy@staffpilot.ai.
               </p>
             </section>
 
@@ -101,7 +101,7 @@ export default function PrivacyPage() {
                 If you have questions about this Privacy Policy or our data practices, please contact us at:
               </p>
               <p className="leading-relaxed text-muted-foreground">
-                Email: privacy@codian.ai
+                Email: privacy@staffpilot.ai
                 <br />
                 Address: 123 AI Street, San Francisco, CA 94105
               </p>

@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     """Application settings"""
     
     # Application
-    APP_NAME: str = "CODIAN API"
+    APP_NAME: str = "StaffPilot API"
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
     API_V1_PREFIX: str = "/api/v1"
@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     
     # Storage Configuration
-    STORAGE_BACKEND: str = "local"  # Options: local, s3
+    STORAGE_BACKEND: str = "local"  # Options: local, s3, cloudinary
     
     # Local Storage
     LOCAL_STORAGE_PATH: str = "./storage"
@@ -45,12 +45,17 @@ class Settings(BaseSettings):
     S3_ENDPOINT_URL: Optional[str] = None
     S3_REGION: str = "us-east-1"
     
+    # Cloudinary Storage (when STORAGE_BACKEND=cloudinary)
+    CLOUDINARY_CLOUD_NAME: Optional[str] = None
+    CLOUDINARY_API_KEY: Optional[str] = None
+    CLOUDINARY_API_SECRET: Optional[str] = None
+    
     # Vector Database
     VECTOR_DB_PROVIDER: str = "chromadb"  # Options: chromadb, pinecone, qdrant, pgvector
     CHROMA_DB_PATH: str = "./chroma_db"  # Path for ChromaDB persistence
     PINECONE_API_KEY: Optional[str] = None
     PINECONE_ENVIRONMENT: Optional[str] = None
-    PINECONE_INDEX_NAME: str = "codian"
+    PINECONE_INDEX_NAME: str = "staffpilot"
     QDRANT_URL: Optional[str] = None
     QDRANT_API_KEY: Optional[str] = None
     
@@ -62,8 +67,8 @@ class Settings(BaseSettings):
     
     # Gemini Model Configuration
     GOOGLE_MODEL_CONTENT: str = "gemini-2.5-flash"  # For content generation (set GOOGLE_MODEL_CONTENT=gemini-2.5-flash-exp in .env)
-    GOOGLE_MODEL_IMAGE: str = "gemini-2.5-flash-image"  # For image generation using Gemini 2.5 Flash Image
-    GOOGLE_MODEL_VIDEO: str = "gemini-2.0-flash-exp"  # For video generation
+    GOOGLE_MODEL_IMAGE: str = "gemini-2.5-flash-image"  # For image generation using generate_content() method
+    GOOGLE_MODEL_VIDEO: str = "veo-3.1-generate-preview"  # For video generation
     GOOGLE_EMBEDDING_MODEL: str = "text-embedding-004"  # For embeddings
     
     # OpenAI Model Configuration
@@ -90,6 +95,10 @@ class Settings(BaseSettings):
     TIKTOK_CLIENT_SECRET: Optional[str] = None
     TWITTER_CLIENT_ID: Optional[str] = None
     TWITTER_CLIENT_SECRET: Optional[str] = None
+    # Twitter OAuth 1.0a credentials (for media uploads)
+    # These are the API Key and API Secret from Twitter Developer Portal
+    TWITTER_API_KEY: Optional[str] = None  # OAuth 1.0a Consumer Key
+    TWITTER_API_SECRET: Optional[str] = None  # OAuth 1.0a Consumer Secret
     
     # Google OAuth Credentials (for Google Ads & Analytics)
     GOOGLE_CLIENT_ID: Optional[str] = None
@@ -97,7 +106,6 @@ class Settings(BaseSettings):
     GOOGLE_ADS_DEVELOPER_TOKEN: Optional[str] = None
     GOOGLE_ADS_PROJECT_ID: Optional[str] = None  
     GOOGLE_ADS_MANAGER_CUSTOMER_ID: Optional[str] = None    
-    GOOGLE_REDIRECT_URI: Optional[str] = None
     
     # Meta Ads API (for Facebook/Instagram Ads)
     META_ADS_APP_ID: Optional[str] = None

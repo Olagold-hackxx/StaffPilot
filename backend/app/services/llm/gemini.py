@@ -1,32 +1,22 @@
 """
-Google Gemini LLM implementation
+Google Gemini LLM implementation using the new google.genai API
 """
 import asyncio
 from typing import Dict, List, Optional, AsyncGenerator
 import json
-import io
 from io import BytesIO
 from app.services.llm.base import BaseLLMService
 from app.utils.logger import logger
 
 try:
-    import google.generativeai as genai
-    GEMINI_AVAILABLE = True
-except ImportError:
-    GEMINI_AVAILABLE = False
-    genai = None
-    logger.warning("google-generativeai not installed. Install with: pip install google-generativeai")
-
-# Try to import new genai API (available in newer versions)
-try:
-    from google import genai as new_genai
+    from google import genai
     from google.genai import types
-    NEW_GENAI_AVAILABLE = True
+    GENAI_AVAILABLE = True
 except ImportError:
-    NEW_GENAI_AVAILABLE = False
-    new_genai = None
+    GENAI_AVAILABLE = False
+    genai = None
     types = None
-    logger.warning("New google.genai API not available. Using legacy API for image generation.")
+    logger.warning("google-genai not installed. Install with: pip install google-genai")
 
 try:
     from PIL import Image
@@ -39,132 +29,82 @@ except ImportError:
 
 class GeminiService(BaseLLMService):
     """
-    Google Gemini implementation of BaseLLMService
+    Google Gemini implementation of BaseLLMService using the new google.genai API
     """
     
     def __init__(self, api_key: str, model_config: Dict):
-        if not GEMINI_AVAILABLE or genai is None:
-            raise ImportError("google-generativeai library not installed. Install with: pip install google-generativeai>=0.8.0")
+        if not GENAI_AVAILABLE or genai is None:
+            raise ImportError("google-genai library not installed. Install with: pip install google-genai")
         
         super().__init__(api_key, model_config)
-        genai.configure(api_key=api_key)
         
-        self.content_model = genai.GenerativeModel(self.content_model_name)
-        
-        # Initialize image model using Gemini 2.5 Flash Image
-        # Note: Image generation uses the new google-genai API, not this model
-        # This is kept for backward compatibility but won't be used
-        self.image_model = None
-        
-        # Initialize new genai client for image generation (using new API - primary method)
-        if NEW_GENAI_AVAILABLE and new_genai:
-            try:
-                self.genai_client = new_genai.Client(api_key=api_key)
-            except Exception as e:
-                logger.warning(f"Failed to initialize new genai client: {str(e)}")
-                self.genai_client = None
-        else:
-            self.genai_client = None
-        
-        self.video_model = genai.GenerativeModel(self.video_model_name) if self.video_model_name else None
+        # Initialize the genai client
+        self.genai_client = genai.Client(api_key=api_key)
     
     async def generate_content(
         self,
         prompt: str,
         system_instruction: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: int = 2048
+        max_tokens: int = 2048,
+        **kwargs
     ) -> str:
         """Generate text content using Gemini"""
         
         try:
-            generation_config = genai.types.GenerationConfig(
-                temperature=temperature,
-                max_output_tokens=max_tokens,
-            )
+            model_name = self.content_model_name or "gemini-2.5-flash"
             
-            # If system_instruction is provided, prepend it to the prompt
-            # Gemini API doesn't support system_instruction as a separate parameter in this version
+            # Build contents - can be string directly (as per reference)
             if system_instruction:
-                full_prompt = f"{system_instruction}\n\n{prompt}"
+                contents = f"{system_instruction}\n\n{prompt}"
             else:
-                full_prompt = prompt
+                contents = prompt
             
-            response = await asyncio.to_thread(
-                self.content_model.generate_content,
-                full_prompt,
-                generation_config=generation_config
-            )
+            def _generate():
+                # Simple API call as per reference: client.models.generate_content(model, contents)
+                # The new API doesn't support max_output_tokens, temperature, etc. as direct kwargs
+                # Filter out all unsupported kwargs
+                unsupported_params = [
+                    'automatic_function_calling', 'functions', 'function_call', 'tools',
+                    'max_output_tokens', 'max_tokens', 'temperature'  # These are not supported in the simple API
+                ]
+                
+                # Only pass through kwargs that might be supported (but likely none are)
+                call_kwargs = {}
+                for key, value in kwargs.items():
+                    if key not in unsupported_params:
+                        call_kwargs[key] = value
+                
+                # Call the API - simple approach as per reference (no config parameters)
+                if call_kwargs:
+                    response = self.genai_client.models.generate_content(
+                        model=model_name,
+                        contents=contents,
+                        **call_kwargs
+                    )
+                else:
+                    response = self.genai_client.models.generate_content(
+                        model=model_name,
+                        contents=contents
+                    )
+                return response
             
-            # Extract text from response - handle multiple response structures
-            text_parts = []
+            response = await asyncio.to_thread(_generate)
             
-            # Method 1: Try response.candidates[0].content.parts (most common structure)
-            if hasattr(response, 'candidates') and response.candidates:
-                for candidate in response.candidates:
-                    if hasattr(candidate, 'content'):
-                        # Check candidate.content.parts
-                        if hasattr(candidate.content, 'parts') and candidate.content.parts:
-                            for part in candidate.content.parts:
-                                if hasattr(part, 'text') and part.text:
-                                    text_parts.append(str(part.text))
-                        # Check if candidate.content has text directly
-                        elif hasattr(candidate.content, 'text') and candidate.content.text:
-                            text_parts.append(str(candidate.content.text))
-                    # Check if candidate has text directly
-                    elif hasattr(candidate, 'text') and candidate.text:
-                        text_parts.append(str(candidate.text))
+            # Extract text from response - use response.text (the simple approach from reference)
+            if hasattr(response, 'text') and response.text:
+                return str(response.text).strip()
             
-            # Method 2: Try response.parts as fallback
-            if not text_parts and hasattr(response, 'parts') and response.parts:
+            # Fallback: check response.parts if .text doesn't exist
+            if hasattr(response, 'parts') and response.parts:
+                text_parts = []
                 for part in response.parts:
-                    if hasattr(part, 'text') and part.text:
+                    if hasattr(part, 'text') and part.text is not None:
                         text_parts.append(str(part.text))
+                if text_parts:
+                    return ''.join(text_parts).strip()
             
-            # Method 3: Try response.content.parts
-            if not text_parts and hasattr(response, 'content'):
-                if hasattr(response.content, 'parts') and response.content.parts:
-                    for part in response.content.parts:
-                        if hasattr(part, 'text') and part.text:
-                            text_parts.append(str(part.text))
-                elif hasattr(response.content, 'text') and response.content.text:
-                    text_parts.append(str(response.content.text))
-            
-            # Method 4: Try response.text as last resort (works for simple responses)
-            if not text_parts:
-                try:
-                    if hasattr(response, 'text') and response.text:
-                        text_parts.append(str(response.text))
-                except Exception as text_error:
-                    logger.debug(f"response.text access failed (expected for multi-part): {text_error}")
-            
-            # Method 5: Try to get text from first candidate directly
-            if not text_parts and hasattr(response, 'candidates') and response.candidates:
-                first_candidate = response.candidates[0]
-                # Try various attributes
-                for attr in ['text', 'content', 'output', 'message']:
-                    if hasattr(first_candidate, attr):
-                        attr_value = getattr(first_candidate, attr)
-                        if isinstance(attr_value, str) and attr_value.strip():
-                            text_parts.append(attr_value)
-                        elif hasattr(attr_value, 'text') and attr_value.text:
-                            text_parts.append(str(attr_value.text))
-            
-            # If we found text in any method, return it
-            if text_parts:
-                result = ''.join(text_parts).strip()
-                if result:
-                    return result
-            
-            # Last resort: Log the response structure for debugging
-            logger.error(f"Failed to extract text from Gemini response. Response structure: {type(response)}, attributes: {dir(response)}")
-            if hasattr(response, 'candidates'):
-                logger.error(f"Candidates: {response.candidates}")
-            if hasattr(response, 'parts'):
-                logger.error(f"Parts: {response.parts}")
-            
-            # If we get here, no text was found
-            raise Exception("Failed to extract text from response: No text content found in response parts. Response may be empty or contain non-text content.")
+            raise Exception("Failed to extract text from response: No text content found.")
             
         except Exception as e:
             logger.error(f"Gemini content generation failed: {str(e)}")
@@ -207,40 +147,66 @@ Return your response as valid JSON only. Do not include any markdown formatting 
         self,
         prompt: str,
         system_instruction: Optional[str] = None,
-        temperature: float = 0.7
+        temperature: float = 0.7,
+        **kwargs
     ) -> AsyncGenerator[str, None]:
         """Stream content generation"""
         
-        generation_config = genai.types.GenerationConfig(
-            temperature=temperature,
-        )
+        model_name = self.content_model_name or "gemini-2.5-flash"
         
-        # If system_instruction is provided, prepend it to the prompt
-        # Gemini API doesn't support system_instruction as a separate parameter in this version
+        # Build contents
         if system_instruction:
             full_prompt = f"{system_instruction}\n\n{prompt}"
         else:
             full_prompt = prompt
         
-        response = await asyncio.to_thread(
-            self.content_model.generate_content,
-            full_prompt,
-            generation_config=generation_config,
-            stream=True
-        )
+        def _generate():
+            # Filter out unsupported kwargs - the new API doesn't support temperature, max_output_tokens, etc.
+            unsupported_params = [
+                'automatic_function_calling', 'functions', 'function_call', 'tools',
+                'max_output_tokens', 'max_tokens', 'temperature'  # These are not supported in the simple API
+            ]
+            call_kwargs = {}
+            
+            for key, value in kwargs.items():
+                if key not in unsupported_params:
+                    call_kwargs[key] = value
+            
+            # Call with stream=True - simple approach
+            if call_kwargs:
+                response = self.genai_client.models.generate_content(
+                    model=model_name,
+                    contents=full_prompt,
+                    stream=True,
+                    **call_kwargs
+                )
+            else:
+                response = self.genai_client.models.generate_content(
+                    model=model_name,
+                    contents=full_prompt,
+                    stream=True
+                )
+            return response
         
+        response = await asyncio.to_thread(_generate)
+        
+        # Stream chunks - use response.text if available, otherwise check parts
         for chunk in response:
-            if chunk.text:
+            if hasattr(chunk, 'text') and chunk.text:
                 yield chunk.text
+            elif hasattr(chunk, 'parts') and chunk.parts:
+                for part in chunk.parts:
+                    if hasattr(part, 'text') and part.text:
+                        yield part.text
     
     async def generate_image(
-        self,
-        prompt: str,
-        aspect_ratio: str = "1:1",
-        number_of_images: int = 1
-    ) -> List[bytes]:
+    self,
+    prompt: str,
+    aspect_ratio: str = "1:1",
+    number_of_images: int = 1
+) -> List[bytes]:
         """
-        Generate images using Gemini 2.5 Flash Image model via the new google-genai API.
+        Generate images using Imagen model via the new google.genai API.
         
         Args:
             prompt: Text prompt for image generation
@@ -248,146 +214,306 @@ Return your response as valid JSON only. Do not include any markdown formatting 
             number_of_images: Number of images to generate
         
         Returns:
-            List of image data as bytes
+            List of image data as bytes (decoded, ready to use)
         """
         try:
-            # Use the new google-genai API if available
-            if self.genai_client and NEW_GENAI_AVAILABLE:
-                logger.info(f"Generating {number_of_images} image(s) with Gemini 2.5 Flash Image (new API), prompt: {prompt[:100]}...")
-                
-                model_name = self.image_model_name or "gemini-2.5-flash-image"
-                
-                # Generate content using the new API
+            import base64
+            
+            model_name = self.image_model_name or "gemini-2.5-flash-image"
+            logger.info(f"Generating {number_of_images} image(s) with {model_name}, prompt: {prompt[:100]}...")
+            
+            images = []
+            
+            for _ in range(number_of_images):
                 def _generate():
                     response = self.genai_client.models.generate_content(
                         model=model_name,
-                        contents=[prompt],
+                        contents=[prompt]
                     )
                     return response
                 
                 response = await asyncio.to_thread(_generate)
                 
-                images = []
-                
-                # Process response: response.parts (simpler structure)
+                # Process response parts
                 if hasattr(response, 'parts') and response.parts:
-                    for i, part in enumerate(response.parts):
-                        if hasattr(part, 'text') and part.text is not None:
-                            logger.debug(f"Response part {i+1} contains text: {part.text[:100]}")
-                        elif hasattr(part, 'inline_data') and part.inline_data is not None:
+                    for part in response.parts:
+                        if hasattr(part, 'inline_data') and part.inline_data is not None:
                             try:
-                                # Use part.as_image() method to get PIL Image, then convert to bytes
-                                if hasattr(part, 'as_image'):
-                                    pil_image = part.as_image()
-                                    if Image_available and Image:
-                                        img_bytes = BytesIO()
-                                        pil_image.save(img_bytes, format='PNG')
-                                        image_data = img_bytes.getvalue()
-                                        images.append(image_data)
-                                        logger.info(f"Generated image {len(images)} ({len(image_data)} bytes)")
+                                inline_data = part.inline_data
+                                image_data = None
+                                
+                                # Extract raw data
+                                if hasattr(inline_data, 'data'):
+                                    data = inline_data.data
+                                    
+                                    # ===== FIX: Handle base64-encoded data =====
+                                    if isinstance(data, str):
+                                        # Data is base64-encoded string - decode it
+                                        try:
+                                            image_data = base64.b64decode(data)
+                                            logger.info(f"✓ Decoded base64 image data ({len(image_data)} bytes)")
+                                        except Exception as e:
+                                            logger.error(f"Failed to decode base64: {str(e)}")
+                                            continue
+                                            
+                                    elif isinstance(data, bytes):
+                                        # Check if it's actually base64-encoded bytes
+                                        # PNG signature in base64 starts with: iVBORw0K
+                                        if data.startswith(b'iVBORw0K') or data.startswith(b'/9j/'):
+                                            # It's base64-encoded bytes, decode it
+                                            try:
+                                                image_data = base64.b64decode(data)
+                                                logger.info(f"✓ Decoded base64 bytes to image ({len(image_data)} bytes)")
+                                            except Exception as e:
+                                                logger.error(f"Failed to decode base64 bytes: {str(e)}")
+                                                continue
+                                        else:
+                                            # It's already raw binary image data
+                                            image_data = data
+                                            logger.info(f"✓ Using raw binary image data ({len(image_data)} bytes)")
                                     else:
-                                        # Fallback: try to get data directly
-                                        image_data = part.inline_data.data
+                                        logger.warning(f"Unexpected data type: {type(data)}")
+                                        continue
+                                
+                                # Validate the decoded image
+                                if image_data:
+                                    # Verify it's a valid image by checking magic bytes
+                                    if image_data.startswith(b'\x89PNG'):
+                                        logger.info("✓ Valid PNG image")
+                                    elif image_data.startswith(b'\xff\xd8\xff'):
+                                        logger.info("✓ Valid JPEG image")
+                                    elif image_data.startswith(b'GIF8'):
+                                        logger.info("✓ Valid GIF image")
+                                    else:
+                                        logger.warning(f"Unknown image format. First 10 bytes: {image_data[:10].hex()}")
+                                    
+                                    # Optionally validate with PIL
+                                    if Image_available and Image:
+                                        try:
+                                            img_buffer = BytesIO(image_data)
+                                            pil_image = Image.open(img_buffer)
+                                            pil_image.verify()
+                                            logger.info(f"✓ PIL validation passed: {pil_image.format} {pil_image.size}")
+                                            
+                                            # Re-open and ensure it's PNG
+                                            img_buffer = BytesIO(image_data)
+                                            pil_image = Image.open(img_buffer)
+                                            
+                                            if pil_image.format != 'PNG':
+                                                logger.info(f"Converting {pil_image.format} to PNG")
+                                                img_bytes = BytesIO()
+                                                pil_image.save(img_bytes, format='PNG')
+                                                image_data = img_bytes.getvalue()
+                                        
+                                        except Exception as e:
+                                            logger.warning(f"PIL validation failed: {str(e)}")
+                                            # Continue anyway - the binary data might still be valid
+                                    
+                                    images.append(image_data)
+                                    logger.info(f"✓ Added image {len(images)} ({len(image_data)} bytes)")
+                            
+                            except Exception as e:
+                                logger.error(f"Failed to process image: {str(e)}", exc_info=True)
+                                continue
+                
+                # Also check candidates structure
+                if not images and hasattr(response, 'candidates') and response.candidates:
+                    for candidate in response.candidates:
+                        if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
+                            for part in candidate.content.parts:
+                                if hasattr(part, 'inline_data') and part.inline_data is not None:
+                                    try:
+                                        inline_data = part.inline_data
+                                        image_data = None
+                                        
+                                        if hasattr(inline_data, 'data'):
+                                            data = inline_data.data
+                                            
+                                            # ===== FIX: Same decoding logic =====
+                                            if isinstance(data, str):
+                                                try:
+                                                    image_data = base64.b64decode(data)
+                                                    logger.info(f"✓ Decoded base64 from candidate ({len(image_data)} bytes)")
+                                                except Exception as e:
+                                                    logger.error(f"Failed to decode: {str(e)}")
+                                                    continue
+                                            
+                                            elif isinstance(data, bytes):
+                                                if data.startswith(b'iVBORw0K') or data.startswith(b'/9j/'):
+                                                    try:
+                                                        image_data = base64.b64decode(data)
+                                                        logger.info(f"✓ Decoded base64 bytes from candidate ({len(image_data)} bytes)")
+                                                    except Exception as e:
+                                                        logger.error(f"Failed to decode: {str(e)}")
+                                                        continue
+                                                else:
+                                                    image_data = data
+                                                    logger.info(f"✓ Using raw binary from candidate ({len(image_data)} bytes)")
+                                        
                                         if image_data:
-                                            images.append(image_data)
-                                            logger.info(f"Generated image {len(images)} ({len(image_data)} bytes)")
-                            except Exception as img_error:
-                                logger.warning(f"Failed to process generated image {len(images)+1}: {str(img_error)}")
-                                continue
+                                            # Validate
+                                            if image_data.startswith(b'\x89PNG') or image_data.startswith(b'\xff\xd8\xff'):
+                                                images.append(image_data)
+                                                logger.info(f"✓ Added candidate image {len(images)}")
+                                            else:
+                                                logger.warning(f"Invalid image format from candidate")
+                                    
+                                    except Exception as e:
+                                        logger.error(f"Failed to process candidate image: {str(e)}", exc_info=True)
+                                        continue
                 
-                if not images:
-                    error_msg = "No images generated in response"
-                    logger.error(f"Gemini image generation failed: {error_msg}")
-                    raise Exception(f"Image generation failed: {error_msg}")
-                
-                logger.info(f"Successfully generated {len(images)} image(s)")
-                return images
+                if images and number_of_images == 1:
+                    break
             
-            # Fallback to legacy API if new API is not available
-            elif self.image_model:
-                logger.info(f"Generating {number_of_images} image(s) with Gemini 2.5 Flash Image (legacy API), prompt: {prompt[:100]}...")
-                
-                def _generate():
-                    response = self.image_model.generate_content(prompt)
-                    return response
-                
-                response = await asyncio.to_thread(_generate)
-                
-                images = []
-                
-                # Process generated images from inline_data_parts (legacy API)
-                if hasattr(response, 'inline_data_parts') and response.inline_data_parts:
-                    for i, part in enumerate(response.inline_data_parts):
-                        if part.mime_type and part.mime_type.startswith('image/'):
-                            try:
-                                image_data = part.data
-                                if image_data:
-                                    images.append(image_data)
-                                    logger.info(f"Generated image {i+1} ({len(image_data)} bytes)")
-                            except Exception as img_error:
-                                logger.warning(f"Failed to process generated image {i+1}: {str(img_error)}")
-                                continue
-                
-                # If no images found in inline_data_parts, try alternative response structure
-                if not images and hasattr(response, 'parts'):
-                    for i, part in enumerate(response.parts):
-                        if hasattr(part, 'inline_data') and part.inline_data:
-                            try:
-                                image_data = part.inline_data.data
-                                if image_data:
-                                    images.append(image_data)
-                                    logger.info(f"Generated image {i+1} ({len(image_data)} bytes)")
-                            except Exception as img_error:
-                                logger.warning(f"Failed to process generated image {i+1}: {str(img_error)}")
-                                continue
-                
-                if not images:
-                    error_msg = "No images generated in response"
-                    logger.error(f"Gemini image generation failed: {error_msg}")
-                    raise Exception(f"Image generation failed: {error_msg}")
-                
-                logger.info(f"Successfully generated {len(images)} image(s)")
-                return images
-            else:
-                raise Exception("Image generation not available. Please ensure google-genai>=1.0.0 is installed for the new API, or google-generativeai is installed for the legacy API.")
+            if not images:
+                raise Exception("No valid images generated")
+            
+            logger.info(f"✓ Successfully generated {len(images)} image(s)")
+            return images
             
         except Exception as e:
-            logger.error(f"Gemini image generation failed: {str(e)}", exc_info=True)
-            raise Exception(f"Gemini image generation failed: {str(e)}")
-    
+            logger.error(f"Image generation failed: {str(e)}", exc_info=True)
+            raise Exception(f"Image generation failed: {str(e)}")
+        
     async def generate_video(
         self,
         prompt: str,
         duration_seconds: int = 5,
         aspect_ratio: str = "16:9"
     ) -> bytes:
-        """Generate video using Gemini 2.0 Flash"""
+        """
+        Generate video using Veo 3.1 model via the new google.genai API.
         
+        Args:
+            prompt: Text prompt for video generation
+            duration_seconds: Video duration in seconds
+            aspect_ratio: Video aspect ratio (e.g., "16:9", "9:16", "1:1")
+        
+        Returns:
+            Video data as bytes (MP4 format)
+        """
         try:
-            if not self.video_model:
-                raise Exception("Video generation model not configured")
+            import time
             
-            # Note: Video generation API may vary - this is a placeholder structure
-            video_config = {
-                "prompt": prompt,
-                "duration": duration_seconds,
-                "aspect_ratio": aspect_ratio
-            }
+            model_name = self.video_model_name or "veo-3.1-generate-preview"
+            logger.info(f"Generating video with {model_name}, prompt: {prompt[:100]}..., duration: {duration_seconds}s")
             
-            response = await asyncio.to_thread(
-                self.video_model.generate_content,
-                str(video_config)
-            )
+            def _generate():
+                # Start video generation - returns an operation
+                # Based on user's working code: client.models.generate_videos()
+                try:
+                    # First, try the exact pattern from user's code
+                    operation = self.genai_client.models.generate_videos(
+                        model=model_name,
+                        prompt=prompt
+                    )
+                except AttributeError:
+                    # If generate_videos doesn't exist, try alternative patterns
+                    logger.warning("generate_videos not found on models, trying alternative methods...")
+                    
+                    # Log available methods for debugging
+                    available_methods = [m for m in dir(self.genai_client.models) if not m.startswith('_')]
+                    logger.debug(f"Available methods on models: {available_methods}")
+                    
+                    # Try direct client access
+                    if hasattr(self.genai_client, 'generate_videos'):
+                        operation = self.genai_client.generate_videos(
+                            model=model_name,
+                            prompt=prompt
+                        )
+                    else:
+                        # Try getting the model first, then calling generate
+                        try:
+                            video_model = self.genai_client.models.get(model_name)
+                            if hasattr(video_model, 'generate_videos'):
+                                operation = video_model.generate_videos(prompt=prompt)
+                            elif hasattr(video_model, 'generate'):
+                                operation = video_model.generate(prompt=prompt)
+                            else:
+                                raise AttributeError(
+                                    f"Video generation method not found. "
+                                    f"Model methods: {[m for m in dir(video_model) if not m.startswith('_')]}"
+                                )
+                        except Exception as model_error:
+                            raise Exception(
+                                f"Video generation API not available. "
+                                f"Please ensure you're using the latest google-genai library (pip install --upgrade google-genai). "
+                                f"Error: {str(model_error)}"
+                            )
+                
+                return operation
             
-            # Process video response
-            if hasattr(response, 'parts') and response.parts:
-                video_data = response.parts[0].video_data
-                return video_data
+            # Start the operation
+            operation = await asyncio.to_thread(_generate)
+            operation_name = operation.name if hasattr(operation, 'name') else str(operation)
+            logger.info(f"Video generation operation started: {operation_name}")
             
-            raise Exception("Video generation not yet fully implemented")
+            # Poll the operation status until the video is ready
+            max_wait_time = 600  # 10 minutes max
+            wait_interval = 10  # Check every 10 seconds
+            elapsed_time = 0
+            
+            while not operation.done:
+                if elapsed_time >= max_wait_time:
+                    raise Exception(f"Video generation timed out after {max_wait_time} seconds")
+                
+                logger.info(f"Waiting for video generation to complete... (elapsed: {elapsed_time}s)")
+                await asyncio.sleep(wait_interval)
+                elapsed_time += wait_interval
+                
+                # Get updated operation status - operations.get() expects the operation object itself
+                def _get_operation(op):
+                    return self.genai_client.operations.get(op)
+                
+                operation = await asyncio.to_thread(_get_operation, operation)
+            
+            logger.info("Video generation completed!")
+            
+            # Check if operation was successful
+            if hasattr(operation, 'error') and operation.error:
+                error_msg = str(operation.error)
+                logger.error(f"Video generation operation failed: {error_msg}")
+                raise Exception(f"Video generation failed: {error_msg}")
+            
+            # Download the generated video
+            if not hasattr(operation, 'response') or not operation.response:
+                raise Exception("Video generation operation completed but no response found")
+            
+            if not hasattr(operation.response, 'generated_videos') or not operation.response.generated_videos:
+                raise Exception("Video generation operation completed but no videos found in response")
+            
+            generated_video = operation.response.generated_videos[0]
+            
+            if not hasattr(generated_video, 'video') or not generated_video.video:
+                raise Exception("Generated video object found but no video file available")
+            
+            # Download the video file
+            def _download():
+                return self.genai_client.files.download(file=generated_video.video)
+            
+            video_file = await asyncio.to_thread(_download)
+            
+            # Read video data
+            if hasattr(video_file, 'read'):
+                video_data = video_file.read()
+            elif hasattr(video_file, 'getvalue'):
+                video_data = video_file.getvalue()
+            elif isinstance(video_file, bytes):
+                video_data = video_file
+            else:
+                # Try to get content attribute
+                video_data = getattr(video_file, 'content', None)
+                if not video_data:
+                    raise Exception(f"Unable to extract video data from file object: {type(video_file)}")
+            
+            if not video_data:
+                raise Exception("Downloaded video file is empty")
+            
+            logger.info(f"✓ Video generated successfully ({len(video_data)} bytes)")
+            return video_data
             
         except Exception as e:
-            logger.error(f"Gemini video generation failed: {str(e)}")
+            logger.error(f"Gemini video generation failed: {str(e)}", exc_info=True)
             raise Exception(f"Gemini video generation failed: {str(e)}")
     
     async def generate_embeddings(
@@ -398,36 +524,61 @@ Return your response as valid JSON only. Do not include any markdown formatting 
         """Generate embeddings using Google text-embedding-004"""
         
         try:
-            # Ensure model name has the "models/" prefix
-            model_name = self.embedding_model_name
-            if not model_name.startswith("models/"):
-                model_name = f"models/{model_name}"
+            model_name = self.embedding_model_name or "text-embedding-004"
             
-            result = await asyncio.to_thread(
-                genai.embed_content,
-                model=model_name,
-                content=texts,
-                task_type=task_type
-            )
+            # Use the new API for embeddings
+            # The new API doesn't support task_type parameter
+            def _embed():
+                result = self.genai_client.models.embed_content(
+                    model=model_name,
+                    contents=texts
+                )
+                return result
             
-            # Google's embed_content returns:
-            # - For single text: {'embedding': [0.1, 0.2, ...]}
-            # - For multiple texts: {'embedding': [[0.1, 0.2, ...], [0.3, 0.4, ...], ...]}
-            embeddings = result.get('embedding', [])
+            result = await asyncio.to_thread(_embed)
+            
+            # Extract embeddings from result
+            # The new API returns ContentEmbedding objects with a 'values' attribute
+            embeddings_list = []
+            
+            # Handle different response structures
+            if hasattr(result, 'embeddings'):
+                embeddings = result.embeddings
+            elif isinstance(result, dict) and 'embeddings' in result:
+                embeddings = result['embeddings']
+            elif isinstance(result, dict) and 'embedding' in result:
+                embeddings = result['embedding']
+            elif isinstance(result, list):
+                embeddings = result
+            else:
+                embeddings = []
             
             if not embeddings:
                 logger.warning("No embeddings returned from Google API")
                 return []
             
-            # Check if it's a single embedding (list of floats) or multiple (list of lists)
-            if isinstance(embeddings[0], (int, float)):
-                # Single embedding - wrap in list to match expected return type
-                return [embeddings]
-            else:
-                # Multiple embeddings - return as is
-                return embeddings
+            # Extract values from ContentEmbedding objects or use directly if already lists
+            for embedding in embeddings:
+                if hasattr(embedding, 'values'):
+                    # ContentEmbedding object - extract values
+                    embeddings_list.append(list(embedding.values))
+                elif isinstance(embedding, list):
+                    # Already a list of floats
+                    embeddings_list.append(embedding)
+                elif isinstance(embedding, (int, float)):
+                    # Single value (shouldn't happen, but handle it)
+                    logger.warning("Unexpected single value in embeddings")
+                    continue
+                else:
+                    logger.warning(f"Unexpected embedding type: {type(embedding)}")
+                    continue
+            
+            if not embeddings_list:
+                logger.warning("No valid embeddings extracted from result")
+                return []
+            
+            return embeddings_list
             
         except Exception as e:
             logger.error(f"Embedding generation failed: {str(e)}")
             raise Exception(f"Embedding generation failed: {str(e)}")
-

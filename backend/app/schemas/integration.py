@@ -22,6 +22,7 @@ class SocialIntegrationResponse(BaseModel):
     is_active: bool
     is_verified: bool
     default_page_id: Optional[str] = None  # ID of the default page/organization
+    oauth1_configured: Optional[bool] = None  # For Twitter: whether OAuth 1.0a is configured for media uploads
     created_at: datetime
     updated_at: Optional[datetime]
     last_used_at: Optional[datetime]
@@ -31,7 +32,15 @@ class SocialIntegrationResponse(BaseModel):
     
     @classmethod
     def from_orm(cls, obj):
-        """Custom from_orm to extract default_page_id from meta_data"""
+        """Custom from_orm to extract default_page_id and oauth1_configured from meta_data"""
+        meta_data = obj.meta_data or {}
+        oauth1_configured = None
+        if obj.platform == "twitter":
+            # Check if OAuth 1.0a tokens are configured
+            oauth1_configured = meta_data.get("oauth1_configured", False) or bool(
+                meta_data.get("oauth1_token") and meta_data.get("oauth1_token_secret")
+            )
+        
         data = {
             "id": obj.id,
             "tenant_id": obj.tenant_id,
@@ -45,7 +54,8 @@ class SocialIntegrationResponse(BaseModel):
             "organizations": obj.organizations or [],
             "is_active": obj.is_active,
             "is_verified": obj.is_verified,
-            "default_page_id": obj.meta_data.get("default_page_id") if obj.meta_data else None,
+            "default_page_id": meta_data.get("default_page_id"),
+            "oauth1_configured": oauth1_configured,
             "created_at": obj.created_at,
             "updated_at": obj.updated_at,
             "last_used_at": obj.last_used_at,

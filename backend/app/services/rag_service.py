@@ -3,39 +3,24 @@ RAG Service - Retrieval Augmented Generation using ChromaDB
 """
 from typing import List, Dict, Optional
 from uuid import UUID
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 from sqlalchemy import select
-try:
-    from langchain.text_splitter import RecursiveCharacterTextSplitter
-    from langchain_core.documents import Document as LangChainDocument
-except ImportError:
-    # Fallback if langchain not available
-    from typing import List as LangChainDocument
-    RecursiveCharacterTextSplitter = None
+import asyncio
 from app.models.document import Document
 from app.services.llm.factory import create_llm_service
 from app.services.vector_store import get_vector_store_service
-from app.config import settings
 from app.utils.logger import logger
 
 
 class RAGService:
     """Service for RAG (Retrieval Augmented Generation)"""
     
-    def __init__(self, db: AsyncSession, tenant_id: UUID):
+    def __init__(self, db: Session, tenant_id: UUID):
         self.db = db
         self.tenant_id = tenant_id
         self.llm_service = create_llm_service()
-        if RecursiveCharacterTextSplitter:
-            self.text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=1000,
-                chunk_overlap=200,
-                length_function=len
-            )
-        else:
-            self.text_splitter = None
     
-    async def retrieve_relevant_context(
+    def retrieve_relevant_context(
         self,
         query: str,
         limit: int = 10,
@@ -55,8 +40,16 @@ class RAGService:
             List of relevant document chunks with metadata
         """
         try:
-            # Generate embedding for query
-            query_embeddings_result = await self.llm_service.generate_embeddings([query])
+            # Generate embedding for query (async LLM call wrapped in sync)
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
+            query_embeddings_result = loop.run_until_complete(
+                self.llm_service.generate_embeddings([query])
+            )
             query_embedding = query_embeddings_result[0] if query_embeddings_result else None
             
             if not query_embedding:
@@ -77,7 +70,7 @@ class RAGService:
                 logger.info(f"No relevant chunks found for tenant {self.tenant_id} (assistant_id={assistant_id}, min_similarity={min_similarity})")
                 return []
             
-            # Get document filenames for source attribution
+            # Get document filenames for source attribution (sync DB call)
             document_ids = {r["metadata"].get("document_id") for r in results if r["metadata"].get("document_id")}
             filename_map = {}
             
@@ -88,7 +81,7 @@ class RAGService:
                     Document.id.in_([UUID(doc_id) for doc_id in document_ids if doc_id]),
                     Document.status == DocumentStatus.COMPLETED
                 )
-                docs_result = await self.db.execute(docs_query)
+                docs_result = self.db.execute(docs_query)
                 docs = docs_result.scalars().all()
                 filename_map = {str(doc.id): doc.filename for doc in docs}
             
@@ -114,7 +107,7 @@ class RAGService:
             return []
     
     
-    async def get_context_for_content_creation(
+    def get_context_for_content_creation(
         self,
         user_request: str,
         assistant_id: Optional[UUID] = None
@@ -129,7 +122,7 @@ class RAGService:
         Returns:
             Formatted context string with relevant information
         """
-        relevant_chunks = await self.retrieve_relevant_context(
+        relevant_chunks = self.retrieve_relevant_context(
             query=user_request,
             limit=5,
             assistant_id=assistant_id

@@ -1,5 +1,5 @@
 """
-Base Assistant class - foundation for all CODIAN assistants
+Base Assistant class - foundation for all StaffPilot assistants
 """
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, AsyncGenerator, Optional
@@ -15,7 +15,7 @@ class AssistantType(str, Enum):
 
 class BaseAssistant(ABC):
     """
-    Base class for all CODIAN assistants.
+    Base class for all StaffPilot assistants.
     Each assistant implements specific capabilities while sharing
     common infrastructure (RAG, LLM providers, memory).
     """

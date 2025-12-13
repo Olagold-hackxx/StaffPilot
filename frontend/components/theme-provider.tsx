@@ -18,7 +18,7 @@ type ThemeProviderState = {
 
 const ThemeProviderContext = createContext<ThemeProviderState | undefined>(undefined)
 
-const THEME_STORAGE_KEY = "codian-theme"
+const THEME_STORAGE_KEY = "staffpilot-theme"
 
 export function ThemeProvider({ children }: ThemeProviderProps) {
   // Always use dark theme, no state management needed

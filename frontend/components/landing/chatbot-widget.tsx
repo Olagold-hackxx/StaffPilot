@@ -21,9 +21,9 @@ export function ChatbotWidget() {
   const pathname = usePathname()
 
   // Close chat whenever the route changes (e.g. user clicks to another page)
-  useEffect(() => {
-    closeChatbot()
-  }, [pathname, closeChatbot])
+  // useEffect(() => {
+  //   closeChatbot()
+  // }, [pathname, closeChatbot])
 
   // Add welcome message if no messages exist
   const displayMessages = messages.length === 0 ? [
@@ -120,15 +120,24 @@ export function ChatbotWidget() {
     <>
       {/* Floating Chat Button */}
       {!isOpen && (
-        <button onClick={openChatbot} className="fixed bottom-6 right-4 sm:right-6 z-50 group flex justify-end" aria-label="Open chat">
+        <button 
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            openChatbot()
+          }} 
+          className="fixed bottom-6 right-4 sm:right-6 z-50 group cursor-pointer outline-none focus:outline-none" 
+          aria-label="Open chat"
+          type="button"
+        >
           <div className="relative">
             {/* Animated gradient ring */}
-            <div className="absolute inset-0 rounded-full bg-gradient-to-r from-ai-primary via-ai-secondary to-ai-accent animate-spin-slow blur-md opacity-75" />
+            <div className="absolute inset-0 rounded-full bg-gradient-to-r from-ai-primary via-ai-secondary to-ai-accent animate-spin-slow blur-md opacity-75 pointer-events-none" />
 
             {/* Button */}
             <div className="relative flex ai-gradient items-center justify-center w-16 h-16 rounded-full bg-gradient-to-br from-ai-primary to-ai-secondary shadow-lg shadow-ai-primary/50 transition-transform group-hover:scale-110">
-              <MessageCircle className="w-7 h-7 text-white" />
-              <Sparkles className="absolute -top-1 -right-1 w-5 h-5 text-ai-accent animate-pulse" />
+              <MessageCircle className="w-7 h-7 text-white pointer-events-none" />
+              <Sparkles className="absolute -top-1 -right-1 w-5 h-5 text-ai-accent animate-pulse pointer-events-none" />
             </div>
           </div>
         </button>
@@ -136,7 +145,7 @@ export function ChatbotWidget() {
 
       {/* Chat Window */}
       {isOpen && (
-        <div className="fixed bottom-6 right-4 w-[calc(100vw-2rem)] sm:left-auto sm:right-6 sm:w-[380px] max-h-[80vh] sm:max-h-[85vh] z-50 flex flex-col bg-white/95 dark:bg-gray-900/95 backdrop-blur-xl rounded-2xl shadow-2xl shadow-ai-primary/20 border border-ai-primary/20 overflow-hidden">
+        <div className="fixed bottom-6 right-4 w-[calc(100vw-2rem)] sm:left-auto sm:right-6 sm:w-[380px] min-h-[65vh] max-h-[80vh] sm:max-h-[85vh] z-50 flex flex-col bg-white/95 dark:bg-gray-900/95 backdrop-blur-xl rounded-2xl shadow-2xl shadow-ai-primary/20 border border-ai-primary/20 overflow-hidden">
           {/* Header */}
           <div className="relative flex items-center justify-between p-4 bg-gradient-to-r from-ai-primary via-ai-secondary to-ai-accent">
             <div className="flex items-center gap-3">
@@ -211,16 +220,16 @@ export function ChatbotWidget() {
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyPress}
-                  placeholder="Ask me anything about StaffPilot or AI employees..."
+                  placeholder="Ask me anything about StaffPilot ..."
                   rows={1}
-                  className="w-full px-4 py-3 pr-12 rounded-xl border border-ai-primary/20 dark:border-gray-600 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm focus:outline-none focus:ring-2 focus:ring-ai-primary/50 resize-none text-sm text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400"
+                  className="w-full px-4 py-2 pr-12  rounded-md border border-ai-primary/20 dark:border-gray-600 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm focus:outline-none focus:ring-2 focus:ring-ai-primary/50 resize-none text-sm text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 leading-tight"
                   disabled={isLoading}
                 />
               </div>
               <button
                 type="submit"
                 disabled={isLoading || !input.trim()}
-                className="w-11 h-11 self-start ai-gradient rounded-xl bg-gradient-to-br from-ai-primary to-ai-secondary text-white flex items-center justify-center hover:shadow-lg hover:shadow-ai-primary/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-none"
+                className="w-[35px] h-[35px] self-start ai-gradient rounded-md bg-gradient-to-br from-ai-primary to-ai-secondary text-white flex items-center justify-center hover:shadow-lg hover:shadow-ai-primary/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-none"
                 aria-label="Send message"
               >
                 <Send className="w-5 h-5" />

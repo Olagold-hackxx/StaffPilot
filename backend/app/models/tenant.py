@@ -1,5 +1,5 @@
 """
-Tenant model - represents a business/organization using CODIAN
+Tenant model - represents a business/organization using StaffPilot
 """
 from sqlalchemy import Column, String, Boolean, DateTime, JSON, Text
 from sqlalchemy.dialects.postgresql import UUID

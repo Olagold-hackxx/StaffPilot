@@ -34,7 +34,7 @@ class LangChainLLMAdapter(BaseChatModel):
     @property
     def _llm_type(self) -> str:
         """Return type of LLM"""
-        return "codian_llm_adapter"
+        return "staffpilot_llm_adapter"
     
     def _generate(
         self,
@@ -68,12 +68,17 @@ class LangChainLLMAdapter(BaseChatModel):
                 user_prompt += f"Assistant: {message.content}\n"
         
         # Generate content
+        # Filter out unsupported parameters like automatic_function_calling
+        filtered_kwargs = {k: v for k, v in kwargs.items() 
+                          if k not in ['automatic_function_calling', 'functions', 'function_call']}
+        
         try:
             content = await self.llm_service.generate_content(
                 prompt=user_prompt.strip(),
                 system_instruction=system_instruction,
                 temperature=self.temperature,
-                max_tokens=kwargs.get("max_tokens", 2048)
+                max_tokens=filtered_kwargs.get("max_tokens", 2048),
+                **{k: v for k, v in filtered_kwargs.items() if k != "max_tokens"}
             )
             
             # Create LangChain response

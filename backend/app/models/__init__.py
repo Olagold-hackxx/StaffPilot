@@ -11,7 +11,7 @@ from app.models.integration import SocialIntegration, IntegrationConfig
 from app.models.capability import Capability
 from app.models.agent_execution import AgentExecution
 from app.models.content import ContentItem, ScheduledPost
-from app.models.campaign import Campaign, CampaignAsset
+from app.models.campaign import Campaign, CampaignAsset, CampaignContext, ChatTranscript, CreativeRequest
 from app.models.analytics import AnalyticsReport
 
 __all__ = [
@@ -30,6 +30,9 @@ __all__ = [
     "ScheduledPost",
     "Campaign",
     "CampaignAsset",
+    "CampaignContext",
+    "ChatTranscript",
+    "CreativeRequest",
     "AnalyticsReport",
 ]
 

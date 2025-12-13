@@ -103,7 +103,7 @@ export default function SignUpPage() {
   return (
     <PageLayout>
       <PageHeader
-        title="Get Started with CODIAN"
+        title="Get Started with StaffPilot"
         description="Create your account and choose how you'd like to proceed"
       />
       <div className="mx-auto max-w-2xl py-16">

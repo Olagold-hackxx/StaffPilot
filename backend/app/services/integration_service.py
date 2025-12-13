@@ -185,6 +185,7 @@ class IntegrationService:
         connected_by: Optional[UUID] = None,
         refresh_token: Optional[str] = None,
         token_expires_at: Optional[datetime] = None,
+        refresh_token_expires_at: Optional[datetime] = None,
         pages: Optional[List[Dict]] = None,
         organizations: Optional[List[Dict]] = None
     ) -> SocialIntegration:
@@ -205,6 +206,8 @@ class IntegrationService:
             existing.refresh_token = refresh_token
             existing.profile_data = profile_data
             existing.token_expires_at = token_expires_at
+            if refresh_token_expires_at:
+                existing.refresh_token_expires_at = refresh_token_expires_at
             existing.pages = pages or []
             existing.organizations = organizations or []
             existing.platform_username = profile_data.get("username") or profile_data.get("vanityName") or profile_data.get("name")
@@ -233,6 +236,7 @@ class IntegrationService:
             access_token=access_token,
             refresh_token=refresh_token,
             token_expires_at=token_expires_at,
+            refresh_token_expires_at=refresh_token_expires_at,
             pages=pages or [],
             organizations=organizations or [],
             connected_by=connected_by,

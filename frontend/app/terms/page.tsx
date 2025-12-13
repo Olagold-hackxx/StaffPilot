@@ -12,7 +12,7 @@ export default function TermsPage() {
             <section className="mb-12">
               <h2 className="mb-4 text-2xl font-bold">Agreement to Terms</h2>
               <p className="mb-4 leading-relaxed text-muted-foreground">
-                By accessing or using CODIAN's services, you agree to be bound by these Terms of Service. If you
+                By accessing or using StaffPilot's services, you agree to be bound by these Terms of Service. If you
                 disagree with any part of these terms, you may not access our services.
               </p>
             </section>
@@ -20,7 +20,7 @@ export default function TermsPage() {
             <section className="mb-12">
               <h2 className="mb-4 text-2xl font-bold">Services Description</h2>
               <p className="mb-4 leading-relaxed text-muted-foreground">
-                CODIAN provides AI consultant and management services, including:
+                StaffPilot provides AI consultant and management services, including:
               </p>
               <ul className="mb-4 list-disc space-y-2 pl-6 text-muted-foreground">
                 <li>Custom AI assistant setup and configuration</li>
@@ -64,7 +64,7 @@ export default function TermsPage() {
             <section className="mb-12">
               <h2 className="mb-4 text-2xl font-bold">Intellectual Property</h2>
               <p className="mb-4 leading-relaxed text-muted-foreground">
-                The services, including all content, features, and functionality, are owned by CODIAN and protected by
+                The services, including all content, features, and functionality, are owned by StaffPilot and protected by
                 international copyright, trademark, and other intellectual property laws.
               </p>
               <p className="mb-4 leading-relaxed text-muted-foreground">
@@ -76,7 +76,7 @@ export default function TermsPage() {
             <section className="mb-12">
               <h2 className="mb-4 text-2xl font-bold">Limitation of Liability</h2>
               <p className="mb-4 leading-relaxed text-muted-foreground">
-                To the maximum extent permitted by law, CODIAN shall not be liable for any indirect, incidental,
+                To the maximum extent permitted by law, StaffPilot shall not be liable for any indirect, incidental,
                 special, consequential, or punitive damages resulting from your use of or inability to use the services.
               </p>
             </section>
@@ -111,7 +111,7 @@ export default function TermsPage() {
                 For questions about these Terms of Service, please contact us at:
               </p>
               <p className="leading-relaxed text-muted-foreground">
-                Email: legal@codian.ai
+                Email: legal@staffpilot.ai
                 <br />
                 Address: 123 AI Street, San Francisco, CA 94105
               </p>

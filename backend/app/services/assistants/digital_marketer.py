@@ -26,7 +26,7 @@ class DigitalMarketerAssistant(BaseAssistant):
         target_audience = tenant_config.get("target_audience", "general")
         offerings = tenant_config.get("offerings", "")
         
-        return f"""You are CODIAN's Digital Marketing AI Assistant, managed by a professional account manager.
+        return f"""You are StaffPilot's Digital Marketing AI Assistant, managed by a professional account manager.
 
 Your role is to help businesses create compelling marketing content, campaigns, and strategies.
 

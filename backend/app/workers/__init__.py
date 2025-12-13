@@ -43,7 +43,7 @@ if backend_use_ssl_flag:
 
 # Create Celery app with Redis as broker and result backend
 # Configure SSL before creating app if using rediss://
-celery_app = Celery("codian")
+celery_app = Celery("staffpilot")
 
 # Configure Celery with Redis-optimized settings
 celery_config = {

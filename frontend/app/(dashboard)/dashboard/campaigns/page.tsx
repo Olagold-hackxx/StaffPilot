@@ -9,7 +9,7 @@ import { apiClient } from "@/lib/api"
 import { useToast } from "@/components/ui/use-toast"
 import { 
   Target, Plus, Loader2, CheckCircle2, Clock, Eye, 
-  Pause, DollarSign, Calendar, TrendingUp, MessageSquare, Send, AlertTriangle
+  Pause, DollarSign, Calendar, TrendingUp, MessageSquare, Send, AlertTriangle, LayoutDashboard
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
@@ -67,12 +67,17 @@ export default function CampaignsPage() {
   const [feedbackMessages, setFeedbackMessages] = useState<FeedbackMessage[]>([])
   const [feedbackInput, setFeedbackInput] = useState("")
   const [sendingFeedback, setSendingFeedback] = useState(false)
+  const [campaignName, setCampaignName] = useState("")
   const [objective, setObjective] = useState("")
   const [description, setDescription] = useState("")
   const [budget, setBudget] = useState("")
-  const [durationDays, setDurationDays] = useState("30")
+  const [startDate, setStartDate] = useState("")
+  const [endDate, setEndDate] = useState("")
   const [selectedChannels, setSelectedChannels] = useState<string[]>([])
   const [statusFilter, setStatusFilter] = useState<string>("all")
+  
+  // Creative preference
+  const [creativePreference, setCreativePreference] = useState<"image" | "video" | "both">("both")
 
   const loadCampaigns = useCallback(async () => {
     try {
@@ -104,12 +109,33 @@ export default function CampaignsPage() {
     loadData()
   }, [statusFilter])
 
-  async function loadData() {
-    setLoading(true)
+  // Poll for updates if any campaign/execution is in active state
+  useEffect(() => {
+    // Check if any campaigns are processing/running
+    const hasActiveCampaigns = campaigns.some(c => 
+      ["processing", "creating", "pending", "running", "generating"].includes(c.status.toLowerCase()) || 
+      (c.status === "draft" && !c.plan)
+    )
+    
+    // Check if any executions are running
+    const hasActiveExecutions = executions.some(e => 
+      ["running", "queued", "pending"].includes(e.status.toLowerCase())
+    )
+
+    if (hasActiveCampaigns || hasActiveExecutions || executing) {
+      const intervalId = setInterval(() => {
+        loadData(false)
+      }, 5000)
+      return () => clearInterval(intervalId)
+    }
+  }, [campaigns, executions, executing, statusFilter]) // Re-run effect when data changes to re-evaluate if polling is needed
+
+  async function loadData(showLoading = true) {
+    if (showLoading) setLoading(true)
     try {
       await Promise.all([loadCampaigns(), loadExecutions()])
     } finally {
-      setLoading(false)
+      if (showLoading) setLoading(false)
     }
   }
 
@@ -170,12 +196,16 @@ export default function CampaignsPage() {
         capability_id: campaignsCapability.id,
         request_type: "create_campaign",
         request_data: {
+          name: campaignName.trim() || objective.trim(),
           objective: objective.trim(),
           description: description.trim() || undefined,
           budget: budget ? Number.parseFloat(budget) : undefined,
-          duration_days: Number.parseInt(durationDays, 10) || 30,
+          start_date: startDate || undefined,
+          end_date: endDate || undefined,
           channels: selectedChannels,
-          campaign_type: "brand_awareness"
+          campaign_type: "brand_awareness",
+          // Creative preference - company context comes from uploaded documents
+          creative_preference: creativePreference
         }
       }) as { execution?: { id: string } }
 
@@ -185,11 +215,7 @@ export default function CampaignsPage() {
       })
       
       setShowCreateDialog(false)
-      setObjective("")
-      setDescription("")
-      setBudget("")
-      setDurationDays("30")
-      setSelectedChannels([])
+      resetForm()
       
       // Reload data after a short delay
       setTimeout(() => {
@@ -327,6 +353,17 @@ export default function CampaignsPage() {
     } finally {
       setSendingFeedback(false)
     }
+  }
+
+  function resetForm() {
+    setCampaignName("")
+    setObjective("")
+    setDescription("")
+    setBudget("")
+    setStartDate("")
+    setEndDate("")
+    setSelectedChannels([])
+    setCreativePreference("both")
   }
 
   const channels = [
@@ -506,6 +543,14 @@ export default function CampaignsPage() {
                       <Button
                         size="sm"
                         variant="outline"
+                        onClick={() => router.push(`/dashboard/campaigns/${campaign.id}/workspace`)}
+                      >
+                        <LayoutDashboard className="h-4 w-4 mr-1" />
+                        Workspace
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
                         onClick={() => router.push(`/dashboard/campaigns/${campaign.id}`)}
                       >
                         <Eye className="h-4 w-4 mr-1" />
@@ -550,28 +595,39 @@ export default function CampaignsPage() {
               Describe your campaign objective and the AI will generate a comprehensive strategy with ad copy, budget allocation, and timeline
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
+          <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-2">
+            <div>
+              <label htmlFor="campaign-name" className="text-sm font-medium mb-2 block">
+                Campaign Name *
+              </label>
+              <Input
+                id="campaign-name"
+                placeholder="e.g., Summer Sale 2026"
+                value={campaignName}
+                onChange={(e) => setCampaignName(e.target.value)}
+              />
+            </div>
             <div>
               <label htmlFor="objective" className="text-sm font-medium mb-2 block">
                 Campaign Objective *
               </label>
               <Input
                 id="objective"
-                placeholder="e.g., Product Launch, Brand Awareness, Lead Generation"
+                placeholder="e.g., Product Launch, Brand Awareness, Lead Generation, Conversions"
                 value={objective}
                 onChange={(e) => setObjective(e.target.value)}
               />
             </div>
             <div>
               <label htmlFor="description" className="text-sm font-medium mb-2 block">
-                Description
+                Description / Goals
               </label>
               <Textarea
                 id="description"
                 placeholder="Provide details about your campaign goals, target audience, and key messaging..."
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                rows={4}
+                rows={3}
               />
             </div>
             <div className="grid grid-cols-2 gap-4">
@@ -588,15 +644,42 @@ export default function CampaignsPage() {
                 />
               </div>
               <div>
-                <label htmlFor="duration" className="text-sm font-medium mb-2 block">
-                  Duration (days)
+                <label htmlFor="creative-preference" className="text-sm font-medium mb-2 block">
+                  Creative Preference
+                </label>
+                <Select value={creativePreference} onValueChange={(value: "image" | "video" | "both") => setCreativePreference(value)}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="both">Both (Image & Video)</SelectItem>
+                    <SelectItem value="image">Image Only</SelectItem>
+                    <SelectItem value="video">Video Only</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label htmlFor="start-date" className="text-sm font-medium mb-2 block">
+                  Start Date
                 </label>
                 <Input
-                  id="duration"
-                  type="number"
-                  placeholder="30"
-                  value={durationDays}
-                  onChange={(e) => setDurationDays(e.target.value)}
+                  id="start-date"
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                />
+              </div>
+              <div>
+                <label htmlFor="end-date" className="text-sm font-medium mb-2 block">
+                  End Date
+                </label>
+                <Input
+                  id="end-date"
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
                 />
               </div>
             </div>
@@ -627,7 +710,7 @@ export default function CampaignsPage() {
             <Button variant="outline" onClick={() => setShowCreateDialog(false)}>
               Cancel
             </Button>
-            <Button onClick={handleCreateCampaign} disabled={executing || !objective.trim() || selectedChannels.length === 0}>
+            <Button onClick={handleCreateCampaign} disabled={executing || (!campaignName.trim() && !objective.trim()) || selectedChannels.length === 0}>
               {executing ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />

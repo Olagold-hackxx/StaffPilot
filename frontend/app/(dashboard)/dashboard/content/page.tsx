@@ -73,7 +73,8 @@ export default function ContentPage() {
   const { toast } = useToast()
   const [capability, setCapability] = useState<Capability | null>(null)
   const [loading, setLoading] = useState(true)
-  const [executing, setExecuting] = useState(false)
+  // Submission state for the create dialog; we do not block other executions with it
+  const [submitting, setSubmitting] = useState(false)
   const [showCreateDialog, setShowCreateDialog] = useState(false)
   const [activeTab, setActiveTab] = useState("published")
   
@@ -186,7 +187,7 @@ export default function ContentPage() {
   async function handleCreateContent() {
     if (!capability || !request.trim()) return
 
-    setExecuting(true)
+    setSubmitting(true)
     try {
       const assistants = await apiClient.listAssistants()
       const digitalMarketer = assistants.assistants?.find(
@@ -227,7 +228,7 @@ export default function ContentPage() {
           end_date: endDate ? new Date(endDate).toISOString() : undefined,
         })
 
-        setExecuting(false)
+        setSubmitting(false)
         setShowCreateDialog(false)
         resetForm()
         loadData()
@@ -249,13 +250,22 @@ export default function ContentPage() {
         })
 
         setCurrentExecution(execution.execution || null)
+        if (execution.execution) {
+          // Prepend to local list so we can show status immediately
+          setExecutions((prev) => [execution.execution as Execution, ...prev])
+        }
         
         if (execution.execution?.id) {
           pollExecutionStatus(execution.execution.id)
         }
+
+        // Allow users to queue another action right away
+        setSubmitting(false)
+        setShowCreateDialog(false)
+        resetForm()
       }
     } catch (error: any) {
-      setExecuting(false)
+      setSubmitting(false)
       toast({
         title: "Error",
         description: error.message || "Failed to create content",
@@ -291,12 +301,20 @@ export default function ContentPage() {
 
         if (execution) {
           setCurrentExecution(execution)
+          // Keep execution list in sync so each action shows its own status
+          setExecutions((prev) => {
+            const existingIndex = prev.findIndex((e) => e.id === execution.id)
+            if (existingIndex >= 0) {
+              const updated = [...prev]
+              updated[existingIndex] = execution as Execution
+              return updated
+            }
+            return [execution as Execution, ...prev]
+          })
 
           if (execution.status === "completed") {
             if (pollInterval) clearInterval(pollInterval)
-            setExecuting(false)
-            setShowCreateDialog(false)
-            resetForm()
+            setSubmitting(false)
             loadData()
             toast({
               title: "Success",
@@ -307,7 +325,7 @@ export default function ContentPage() {
 
           if (execution.status === "failed") {
             if (pollInterval) clearInterval(pollInterval)
-            setExecuting(false)
+            setSubmitting(false)
             toast({
               title: "Error",
               description: execution.error_message || "Content creation failed",
@@ -318,7 +336,7 @@ export default function ContentPage() {
 
           if (attempts >= maxAttempts) {
             if (pollInterval) clearInterval(pollInterval)
-            setExecuting(false)
+            setSubmitting(false)
             toast({
               title: "Timeout",
               description: "Content creation is taking longer than expected. Please check back later.",
@@ -1084,9 +1102,9 @@ export default function ContentPage() {
             </Button>
             <Button 
               onClick={handleCreateContent} 
-              disabled={executing || (isScheduled && (!scheduleName.trim() || !startDate))}
+              disabled={submitting || (isScheduled && (!scheduleName.trim() || !startDate))}
             >
-              {executing ? (
+              {submitting ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                   {isScheduled ? "Creating Schedule..." : "Creating..."}
