@@ -16,6 +16,7 @@ class DocumentUploadResponse(BaseModel):
     file_size: int
     status: DocumentStatus
     created_at: datetime
+    meta_data: Dict = {}
     
     class Config:
         from_attributes = True

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { PageLayout } from "@/components/shared/page-layout"
 import { PageHeader } from "@/components/shared/page-header"
@@ -44,9 +44,17 @@ export default function SignUpPage() {
     },
   })
 
+  // Force logout on mount to ensure clean slate for new signup
+  useEffect(() => {
+    authService.logout()
+  }, [])
+
   async function handleSignup(proceedToPricing: boolean) {
     setIsLoading(true)
     try {
+      // Clear any existing session before starting
+      authService.logout()
+
       // Create tenant first
       const tenantResponse = await fetch(
         `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/v1/tenants`,
@@ -71,16 +79,16 @@ export default function SignUpPage() {
         tenant_id: tenant.id,
       })
 
+      // Auto-login to get the token and set it in ApiClient
+      await authService.login(form.getValues("email"), form.getValues("password"))
+
       toast({
         title: "Success",
         description: "Account created successfully",
       })
 
-      if (proceedToPricing) {
-        router.push("/pricing")
-      } else {
-    router.push("/schedule-consultation")
-      }
+      // Redirect to onboarding flow
+      router.push("/onboarding")
     } catch (error: any) {
       toast({
         title: "Error",
@@ -93,11 +101,8 @@ export default function SignUpPage() {
   }
 
   async function onSubmit(data: SignupFormValues) {
-    if (actionType === "signup") {
-      await handleSignup(true)
-    } else if (actionType === "consultation") {
-      await handleSignup(false)
-    }
+    // Both actions now lead to onboarding
+    await handleSignup(true)
   }
 
   return (

@@ -41,6 +41,20 @@ class GeminiService(BaseLLMService):
         # Initialize the genai client
         self.genai_client = genai.Client(api_key=api_key)
     
+    async def close(self):
+        """Cleanup the genai client to prevent async resource warnings."""
+        try:
+            if hasattr(self.genai_client, '_api_client') and hasattr(self.genai_client._api_client, 'aclose'):
+                await self.genai_client._api_client.aclose()
+            elif hasattr(self.genai_client, 'aclose'):
+                await self.genai_client.aclose()
+        except Exception:
+            pass  # Ignore cleanup errors
+    
+    def __del__(self):
+        """Destructor - attempt sync cleanup if not done."""
+        pass  # Don't do anything here to avoid async issues
+    
     async def generate_content(
         self,
         prompt: str,

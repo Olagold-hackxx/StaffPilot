@@ -1,7 +1,7 @@
 """
 Document API routes
 """
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 from uuid import UUID
@@ -19,8 +19,8 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 @router.post("/upload", response_model=DocumentUploadResponse, status_code=status.HTTP_201_CREATED)
 async def upload_document(
     file: UploadFile = File(...),
-    assistant_id: Optional[UUID] = None,
-    required_type: Optional[str] = None,
+    assistant_id: Optional[UUID] = Form(None),
+    required_type: Optional[str] = Form(None),
     current_tenant: Tenant = Depends(get_current_tenant),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)

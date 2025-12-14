@@ -67,9 +67,11 @@ def process_document(self, document_id: str):
                 
                 try:
                     # Step 1: Download document from storage
-                    logger.info(f"Downloading document {document_id} from storage")
+                    # Use storage_url (the full Cloudinary URL with version) instead of storage_key
+                    download_key = document.storage_url or document.storage_key
+                    logger.info(f"Downloading document {document_id} from storage: {download_key}")
                     storage = get_storage()
-                    file_content = await storage.download(document.storage_key)
+                    file_content = await storage.download(download_key)
                     
                     # Step 2: Extract text based on file type
                     logger.info(f"Extracting text from {document.filename}")
@@ -107,6 +109,13 @@ def process_document(self, document_id: str):
                         except Exception as e:
                             logger.warning(f"Failed to generate embedding for chunk {i}: {str(e)}")
                             # Continue with other chunks
+                    
+                    # Cleanup LLM service to prevent async resource warnings
+                    if hasattr(llm_service, 'close'):
+                        try:
+                            await llm_service.close()
+                        except Exception:
+                            pass  # Ignore cleanup errors
                     
                     # Step 5: Store chunks and embeddings in ChromaDB
                     if chunk_embeddings:
