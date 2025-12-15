@@ -581,10 +581,9 @@ Return your response as valid JSON only. Do not include any markdown formatting 
                 except Exception as e:
                     logger.warning(f"client.generate_video failed: {e}")
 
-                # 5. Last resort: Try getting model instance (Wrapped to prevent crash)
+                # 5. Fallback: Try getting model instance (Wrapped to prevent crash)
                 try:
                     logger.info("Attempting fallback to models.get() pattern...")
-                    # We know this line sometimes crashes with TypeError, so we catch it broadly
                     video_model = self.genai_client.models.get(model_name)
                     
                     if hasattr(video_model, 'generate_videos'):
@@ -593,14 +592,31 @@ Return your response as valid JSON only. Do not include any markdown formatting 
                         return video_model.generate(prompt=prompt, config=call_kwargs.get('config'))
                     else:
                         raise AttributeError("Model instance found but has no generate methods")
+                except TypeError as type_error:
+                     # Specific catch for "Models.get() takes 1 positional argument" error
+                     logger.warning(f"Fallback to models.get() failed with TypeError (known issue in some versions): {type_error}")
                 except Exception as fallback_error:
                     logger.warning(f"Fallback to models.get() failed: {fallback_error}")
                 
+                 # 6. Fallback: Try with v1beta API version (often needed for Veo/experimental)
+                try:
+                    logger.info("Attempting fallback to v1beta API client...")
+                    # Create a temporary client with v1beta
+                    beta_client = genai.Client(api_key=self.api_key, http_options={'api_version': 'v1beta'})
+                    
+                    if hasattr(beta_client.models, 'generate_videos'):
+                         logger.info("Found generate_videos on v1beta client!")
+                         return beta_client.models.generate_videos(**call_kwargs)
+                    elif hasattr(beta_client, 'generate_videos'):
+                         return beta_client.generate_videos(**call_kwargs)
+                except Exception as beta_error:
+                    logger.warning(f"Fallback to v1beta client failed: {beta_error}")
+
                 # If we get here, nothing worked
                 # Log available methods for debugging
                 available_models = dir(self.genai_client.models) if hasattr(self.genai_client, 'models') else []
                 logger.error(f"Generate video failed. Available client.models methods: {available_models}")
-                raise AttributeError("Video generation method not found on Google GenAI client")
+                raise AttributeError("Video generation method not found on Google GenAI client (checked standard and v1beta)")
             
             # Start the operation
             operation = await asyncio.to_thread(_generate)
