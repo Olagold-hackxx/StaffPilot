@@ -534,47 +534,73 @@ Return your response as valid JSON only. Do not include any markdown formatting 
             
             def _generate():
                 # Start video generation - returns an operation
-                # Based on user's working code: client.models.generate_videos()
-                try:
-                    # Configure video generation
-                    # The new API typically uses a config object
-                    config = None
-                    if types and hasattr(types, 'GenerateVideosConfig'):
-                        config = types.GenerateVideosConfig(
+                
+                # Configuration for the video (if supported)
+                config = {'duration_seconds': float(duration_seconds), 'aspect_ratio': aspect_ratio}
+                call_kwargs = {'model': model_name, 'prompt': prompt}
+                
+                # Try creating a config object if types is available
+                if types and hasattr(types, 'GenerateVideosConfig'):
+                    try:
+                        cfg_obj = types.GenerateVideosConfig(
                             aspect_ratio=aspect_ratio,
                             duration_seconds=float(duration_seconds)
                         )
-                    
-                    # Call generate_videos with config
-                    if hasattr(self.genai_client.models, 'generate_videos'):
-                        call_kwargs = {'model': model_name, 'prompt': prompt}
-                        if config:
-                            call_kwargs['config'] = config
-                        
-                        operation = self.genai_client.models.generate_videos(**call_kwargs)
-                        
-                    elif hasattr(self.genai_client, 'generate_videos'):
-                        call_kwargs = {'model': model_name, 'prompt': prompt}
-                        if config:
-                            call_kwargs['config'] = config
-                            
-                        operation = self.genai_client.generate_videos(**call_kwargs)
-                    else:
-                        raise AttributeError("Video generation method 'generate_videos' not found on client")
+                        call_kwargs['config'] = cfg_obj
+                    except Exception as e:
+                        logger.warning(f"Failed to create GenerateVideosConfig: {e}")
+                        call_kwargs['config'] = config
+                else:
+                    call_kwargs['config'] = config
 
-                except Exception as api_error:
-                    logger.warning(f"Standard generate_videos call failed: {api_error}. Trying fallback...")
-                    # Fallback: try raw kwargs if config object fails
+                # 1. Try client.models.generate_videos (Standard)
+                try:
                     if hasattr(self.genai_client.models, 'generate_videos'):
-                         operation = self.genai_client.models.generate_videos(
-                            model=model_name,
-                            prompt=prompt,
-                            config={'duration_seconds': float(duration_seconds), 'aspect_ratio': aspect_ratio}
-                        )
+                        return self.genai_client.models.generate_videos(**call_kwargs)
+                except Exception as e:
+                    logger.warning(f"client.models.generate_videos failed: {e}")
+
+                # 2. Try client.generate_videos (Alternative)
+                try:
+                    if hasattr(self.genai_client, 'generate_videos'):
+                        return self.genai_client.generate_videos(**call_kwargs)
+                except Exception as e:
+                    logger.warning(f"client.generate_videos failed: {e}")
+
+                # 3. Try singular naming: client.models.generate_video
+                try:
+                    if hasattr(self.genai_client.models, 'generate_video'):
+                        return self.genai_client.models.generate_video(**call_kwargs)
+                except Exception as e:
+                    logger.warning(f"client.models.generate_video failed: {e}")
+
+                # 4. Try singular naming: client.generate_video
+                try:
+                    if hasattr(self.genai_client, 'generate_video'):
+                        return self.genai_client.generate_video(**call_kwargs)
+                except Exception as e:
+                    logger.warning(f"client.generate_video failed: {e}")
+
+                # 5. Last resort: Try getting model instance (Wrapped to prevent crash)
+                try:
+                    logger.info("Attempting fallback to models.get() pattern...")
+                    # We know this line sometimes crashes with TypeError, so we catch it broadly
+                    video_model = self.genai_client.models.get(model_name)
+                    
+                    if hasattr(video_model, 'generate_videos'):
+                        return video_model.generate_videos(prompt=prompt, config=call_kwargs.get('config'))
+                    elif hasattr(video_model, 'generate'):
+                        return video_model.generate(prompt=prompt, config=call_kwargs.get('config'))
                     else:
-                        raise api_error
+                        raise AttributeError("Model instance found but has no generate methods")
+                except Exception as fallback_error:
+                    logger.warning(f"Fallback to models.get() failed: {fallback_error}")
                 
-                return operation
+                # If we get here, nothing worked
+                # Log available methods for debugging
+                available_models = dir(self.genai_client.models) if hasattr(self.genai_client, 'models') else []
+                logger.error(f"Generate video failed. Available client.models methods: {available_models}")
+                raise AttributeError("Video generation method not found on Google GenAI client")
             
             # Start the operation
             operation = await asyncio.to_thread(_generate)
@@ -594,9 +620,12 @@ Return your response as valid JSON only. Do not include any markdown formatting 
                 await asyncio.sleep(wait_interval)
                 elapsed_time += wait_interval
                 
-                # Get updated operation status - operations.get() expects the operation object itself
+                # Get updated operation status
                 def _get_operation(op):
-                    return self.genai_client.operations.get(op)
+                    # Try operations.get() pattern
+                    if hasattr(self.genai_client, 'operations') and hasattr(self.genai_client.operations, 'get'):
+                         return self.genai_client.operations.get(op)
+                    return op # If API doesn't support polling this way, rely on internal update
                 
                 operation = await asyncio.to_thread(_get_operation, operation)
             
