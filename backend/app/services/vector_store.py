@@ -359,7 +359,7 @@ class PineconeVectorStoreService:
         
         self.pc = Pinecone(api_key=api_key)
         self.index_name = settings.PINECONE_INDEX_NAME
-        self.dimension = 768  # text-embedding-004 dimension
+        self.dimension = 1024  # text-embedding-004 dimension
         
         # Check if host is provided (recommended for production)
         if settings.PINECONE_HOST:
