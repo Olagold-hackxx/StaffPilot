@@ -544,27 +544,13 @@ class TwitterPostingService:
         try:
             bearer_token = access_token
             
-            # Check if token needs refresh (expired or expires in next 5 minutes)
+            # FORCE REFRESH: Always refresh before posting if credentials are available
+            # This ensures we always use a fresh token with correct scopes and prevents 403 errors
+            # caused by token invalidation or scope loss after previous use.
             needs_refresh = False
             if refresh_token and client_id and client_secret:
-                if token_expires_at:
-                    # Check if token is expired or expires soon
-                    time_until_expiry = (token_expires_at - datetime.now(timezone.utc)).total_seconds()
-                    if time_until_expiry < 300:  # Less than 5 minutes (including negative = already expired)
-                        needs_refresh = True
-                        if time_until_expiry < 0:
-                            logger.info(f"[Twitter] Token expired {abs(time_until_expiry):.0f} seconds ago, refreshing...")
-                        else:
-                            logger.info(f"[Twitter] Token expires in {time_until_expiry:.0f} seconds, refreshing...")
-                else:
-                    # If we don't know expiry, refresh anyway to be safe
-                    needs_refresh = True
-                    logger.info("[Twitter] Token expiry unknown, refreshing to ensure validity...")
-            else:
-                # If we have refresh credentials, always try to refresh before posting to ensure token is valid
-                if refresh_token and client_id and client_secret:
-                    needs_refresh = True
-                    logger.info("[Twitter] Refresh credentials available, refreshing token before posting...")
+                needs_refresh = True
+                logger.info("[Twitter] Forcing token refresh before posting to ensure validity...")
             
             # Refresh token if needed
             if needs_refresh:
