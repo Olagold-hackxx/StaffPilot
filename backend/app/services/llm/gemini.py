@@ -560,18 +560,7 @@ Return your response as valid JSON only. Do not include any markdown formatting 
                             
                         operation = self.genai_client.generate_videos(**call_kwargs)
                     else:
-                        # Try getting the model first
-                         video_model = self.genai_client.models.get(model_name)
-                         call_kwargs = {'prompt': prompt}
-                         if config:
-                            call_kwargs['config'] = config
-                            
-                         if hasattr(video_model, 'generate_videos'):
-                             operation = video_model.generate_videos(**call_kwargs)
-                         elif hasattr(video_model, 'generate'):
-                             operation = video_model.generate(**call_kwargs)
-                         else:
-                             raise AttributeError("Video generation method not found")
+                        raise AttributeError("Video generation method 'generate_videos' not found on client")
 
                 except Exception as api_error:
                     logger.warning(f"Standard generate_videos call failed: {api_error}. Trying fallback...")
