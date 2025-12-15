@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     PINECONE_API_KEY: Optional[str] = None
     PINECONE_ENVIRONMENT: Optional[str] = None
     PINECONE_INDEX_NAME: str = "staffpilot"
+    PINECONE_HOST: Optional[str] = None
     QDRANT_URL: Optional[str] = None
     QDRANT_API_KEY: Optional[str] = None
     
