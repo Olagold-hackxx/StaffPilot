@@ -88,11 +88,15 @@ class TwitterPostingService:
                 granted_scopes = token_data.get("scope", "unknown")
                 logger.info(f"[Twitter] Refresh successful. Granted scopes: {granted_scopes}")
                 
+                if "tweet.write" not in granted_scopes:
+                    logger.error(f"[Twitter] CRITICAL: Refreshed token MISSING 'tweet.write' scope! Posting will fail.")
+                
                 return {
                     "success": True,
                     "access_token": token_data.get("access_token"),
                     "refresh_token": token_data.get("refresh_token"),  # Twitter may return a new refresh token
-                    "expires_in": token_data.get("expires_in", 7200)  # Default 2 hours
+                    "expires_in": token_data.get("expires_in", 7200),  # Default 2 hours
+                    "scope": granted_scopes
                 }
         
         except Exception as e:
@@ -576,6 +580,12 @@ class TwitterPostingService:
                 )
                 
                 if refresh_result.get("success"):
+                    # Validate scopes before proceeding
+                    granted_scopes = refresh_result.get("scope", "")
+                    if "tweet.write" not in granted_scopes:
+                         logger.error(f"[Twitter] Refreshed token missing required 'tweet.write' scope. Cannot post.")
+                         raise Exception(f"Refreshed token missing 'tweet.write' scope. Granted: {granted_scopes}")
+
                     bearer_token = refresh_result["access_token"]
                     new_refresh_token = refresh_result.get("refresh_token", refresh_token)
                     expires_in = refresh_result.get("expires_in", 7200)
@@ -626,7 +636,7 @@ class TwitterPostingService:
                                 logger.info(f"[Twitter] Updated token in database for integration {integration_id}")
                         except Exception as db_error:
                             logger.warning(f"[Twitter] Failed to update token in database: {str(db_error)}", exc_info=True)
-                            # Continue with posting even if DB update fails
+                            # Continue with posting even if DB update fails - we have valid token in memory
                 else:
                     error_msg = refresh_result.get('error', 'Unknown error')
                     logger.error(f"[Twitter] Token refresh failed: {error_msg}")
@@ -695,8 +705,6 @@ class TwitterPostingService:
                             logger.error(f"[Twitter] Failed to deactivate integration: {str(deactivate_error)}")
                             # Continue to return error even if deactivation fails
                     
-                    # If token refresh fails, don't attempt to post with expired token
-                    # Return error instead
                     return {
                         "success": False,
                         "error": f"Token refresh failed: {error_msg}. Please reconnect your Twitter account."
