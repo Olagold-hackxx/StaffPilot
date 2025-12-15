@@ -16,7 +16,8 @@ class TwitterPostingService:
     async def refresh_access_token(
         refresh_token: str,
         client_id: str,
-        client_secret: str
+        client_secret: str,
+        scope: Optional[str] = None
     ) -> Dict:
         """
         Refresh Twitter access token using refresh token
@@ -25,6 +26,7 @@ class TwitterPostingService:
             refresh_token: Twitter refresh token
             client_id: Twitter OAuth2 client ID
             client_secret: Twitter OAuth2 client secret
+            scope: Optional space-separated scopes to request (prevents losing permissions)
         
         Returns:
             Dictionary with new access_token, refresh_token, and expires_in
@@ -58,6 +60,10 @@ class TwitterPostingService:
                 "grant_type": "refresh_token"
             }
             
+            # Explicitly request scopes if provided to ensure permissions are retained
+            if scope:
+                request_data["scope"] = scope
+            
             logger.debug(f"[Twitter] Making refresh token request to Twitter API...")
             
             async with httpx.AsyncClient() as client:
@@ -77,6 +83,11 @@ class TwitterPostingService:
                     return {"success": False, "error": error_msg}
                 
                 token_data = response.json()
+                
+                # Log granted scopes to verify permissions
+                granted_scopes = token_data.get("scope", "unknown")
+                logger.info(f"[Twitter] Refresh successful. Granted scopes: {granted_scopes}")
+                
                 return {
                     "success": True,
                     "access_token": token_data.get("access_token"),
@@ -568,10 +579,14 @@ class TwitterPostingService:
                 else:
                     logger.error("[Twitter] Client ID is None or empty!")
                 
+                # Define scopes required for posting to ensure we maintain write access
+                required_scopes = "tweet.read tweet.write users.read offline.access"
+                
                 refresh_result = await TwitterPostingService.refresh_access_token(
                     refresh_token=refresh_token,
                     client_id=client_id,
-                    client_secret=client_secret
+                    client_secret=client_secret,
+                    scope=required_scopes
                 )
                 
                 if refresh_result.get("success"):

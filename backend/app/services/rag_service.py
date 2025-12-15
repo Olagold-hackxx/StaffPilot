@@ -40,21 +40,26 @@ class RAGService:
             List of relevant document chunks with metadata
         """
         try:
-            # Generate embedding for query (async LLM call wrapped in sync)
-            # Generate embedding for query (async LLM call wrapped in sync)
-            try:
-                loop = asyncio.get_event_loop()
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-            
-            if loop.is_closed():
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-            
-            query_embeddings_result = loop.run_until_complete(
-                self.llm_service.generate_embeddings([query])
-            )
+            # Generate embedding for query
+            # Try to use synchronous method if available (avoids asyncio loop issues)
+            if hasattr(self.llm_service, 'generate_embeddings_sync'):
+                query_embeddings_result = self.llm_service.generate_embeddings_sync([query])
+            else:
+                # Fallback to async method with robust loop handling
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                
+                if loop.is_closed():
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                
+                query_embeddings_result = loop.run_until_complete(
+                    self.llm_service.generate_embeddings([query])
+                )
+             
             query_embedding = query_embeddings_result[0] if query_embeddings_result else None
             
             if not query_embedding:
