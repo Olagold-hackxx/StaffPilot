@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     CHROMA_HTTP_HOST: Optional[str] = None  # Set to use ChromaDB HTTP client mode (e.g., "chromadb-server")
     CHROMA_HTTP_PORT: int = 8000  # ChromaDB HTTP server port
     PINECONE_API_KEY: Optional[str] = None
-    PINECONE_HOST: Optional[str] = None  # Pinecone host URL (e.g., "https://staffpilot-xyz.svc.pinecone.io")
+    PINECONE_ENVIRONMENT: Optional[str] = None
     PINECONE_INDEX_NAME: str = "staffpilot"
     QDRANT_URL: Optional[str] = None
     QDRANT_API_KEY: Optional[str] = None
