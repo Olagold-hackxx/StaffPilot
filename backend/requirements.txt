@@ -75,4 +75,5 @@ google-search-results==2.4.2
 # Celery monitoring
 flower==2.0.1  # Celery monitoring
 
-cloudinarypinecone-client>=3.0.0
+cloudinary
+pinecone-client
