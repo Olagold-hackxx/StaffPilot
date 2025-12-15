@@ -1,7 +1,6 @@
 """
 Campaign Creation Worker - Celery tasks for campaign creation
 """
-import asyncio
 import uuid
 from typing import Dict, Any
 from uuid import UUID
@@ -272,13 +271,8 @@ IMPORTANT:
 - CRITICAL: Google Ads descriptions MUST be 90 characters or less. Meta Ads descriptions can be up to 125 characters.
 """
                     
-                    # Agent.execute is async, so we need to handle it
-                    try:
-                        agent_loop = asyncio.get_event_loop()
-                    except RuntimeError:
-                        agent_loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(agent_loop)
-                    agent_result = agent_loop.run_until_complete(agent.execute(enhanced_request))
+                    # Execute agent synchronously (no asyncio needed - works in Celery)
+                    agent_result = agent.execute_sync(enhanced_request)
                     
                     if not agent_result.get("success"):
                         raise Exception(agent_result.get("error", "Campaign plan generation failed"))
@@ -830,20 +824,12 @@ You transform strategy into execution.
 Your outputs are professional, high-quality, and ready for immediate use.
 Do not use conversational filler (e.g., "I hope this helps"). Just provide the work."""
     
-    # Call LLM
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    
+    # Call LLM (sync - no asyncio needed for Celery workers)
     llm_service = create_llm_service()
-    content = loop.run_until_complete(
-        llm_service.generate_content(
-            prompt=prompt,
-            system_instruction=system_instruction,
-            temperature=0.7
-        )
+    content = llm_service.generate_content_sync(
+        prompt=prompt,
+        system_instruction=system_instruction,
+        temperature=0.7
     )
     
     return {
@@ -1067,33 +1053,22 @@ Style Direction:
 Create an image that perfectly captures the campaign's visual identity.
 """
     
-    # Call LLM for image
+    # Call LLM for image (sync - no asyncio needed for Celery workers)
     try:
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        
-        logger.info("DEBUG: created event loop")
         llm_service = create_llm_service()
         logger.info("DEBUG: created llm_service")
         
         image_urls = []
         try:
-            logger.info("DEBUG: Calling generate_image...")
-            # generate_image returns List[bytes], not a dict
-            image_bytes_list = loop.run_until_complete(
-                llm_service.generate_image(
-                    prompt=prompt,
-                    number_of_images=1
-                )
+            logger.info("DEBUG: Calling generate_image_sync...")
+            # generate_image_sync returns List[bytes]
+            image_bytes_list = llm_service.generate_image_sync(
+                prompt=prompt,
+                number_of_images=1
             )
-            logger.info(f"DEBUG: generate_image returned type: {type(image_bytes_list)}")
-            if hasattr(image_bytes_list, '__len__'):
-                logger.info(f"DEBUG: generate_image returned len: {len(image_bytes_list)}")
+            logger.info(f"DEBUG: generate_image_sync returned {len(image_bytes_list) if image_bytes_list else 0} images")
             
-            # Upload each image to storage
+            # Upload each image to storage (sync)
             if image_bytes_list:
                 from app.services.storage import get_storage
                 from io import BytesIO
@@ -1110,9 +1085,8 @@ Create an image that perfectly captures the campaign's visual identity.
                         storage_key = f"tenants/{tenant_id}/campaigns/{campaign_id}/images/{uuid_lib.uuid4()}.png"
                         
                         logger.info(f"DEBUG: Uploading to {storage_key}...")
-                        url = loop.run_until_complete(
-                            storage.upload(key=storage_key, file=img_bytes, content_type="image/png")
-                        )
+                        # Use sync upload
+                        url = storage.upload_sync(key=storage_key, file=img_bytes, content_type="image/png")
                         image_urls.append(url)
                         logger.info(f"Uploaded image to: {url}")
                     except Exception as upload_err:
@@ -1211,27 +1185,20 @@ Create a compelling video ad that:
 - Ends with a clear call to action
 """
     
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    
+    # Use sync methods (no asyncio needed for Celery workers)
     llm_service = create_llm_service()
     
     # Variable duration: pick a random value between 8 and 60 seconds
     import random
     video_duration = random.choice([8, 15, 30, 45, 60])
     
-    # Generate video (this can take several minutes)
+    # Generate video synchronously (this can take several minutes)
     logger.info(f"Starting video generation ({video_duration}s) - this may take 2-10 minutes...")
     try:
-        video_data = loop.run_until_complete(
-            llm_service.generate_video(
-                prompt=video_prompt,
-                duration_seconds=video_duration,
-                aspect_ratio="16:9"
-            )
+        video_data = llm_service.generate_video_sync(
+            prompt=video_prompt,
+            duration_seconds=video_duration,
+            aspect_ratio="16:9"
         )
     except Exception as e:
         logger.error(f"Video generation failed: {e}")
@@ -1239,9 +1206,8 @@ Create a compelling video ad that:
         video_data = b"MOCK_VIDEO" 
         
     
-    # Upload to storage
+    # Upload to storage (sync)
     video_urls = []
-    # Mock video for now if mock data
     if video_data:
         storage = get_storage()
         try:
@@ -1254,12 +1220,11 @@ Create a compelling video ad that:
             video_bytes.seek(0)
             storage_key = f"tenants/{tenant_id}/campaigns/{campaign_id}/videos/{uuid_lib.uuid4()}.mp4"
             
-            url = loop.run_until_complete(
-                storage.upload(
-                    key=storage_key,
-                    file=video_bytes,
-                    content_type="video/mp4"
-                )
+            # Use sync upload
+            url = storage.upload_sync(
+                key=storage_key,
+                file=video_bytes,
+                content_type="video/mp4"
             )
             video_urls.append(url)
             logger.info(f"Uploaded video to: {url}")

@@ -124,6 +124,50 @@ class GeminiService(BaseLLMService):
             logger.error(f"Gemini content generation failed: {str(e)}")
             raise Exception(f"Gemini content generation failed: {str(e)}")
     
+    def generate_content_sync(
+        self,
+        prompt: str,
+        system_instruction: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 2048,
+        **kwargs
+    ) -> str:
+        """Generate text content using Gemini - synchronous version for Celery workers"""
+        
+        try:
+            model_name = self.content_model_name or "gemini-2.5-flash"
+            
+            # Build contents
+            if system_instruction:
+                contents = f"{system_instruction}\n\n{prompt}"
+            else:
+                contents = prompt
+            
+            # Call the API directly (synchronous)
+            response = self.genai_client.models.generate_content(
+                model=model_name,
+                contents=contents
+            )
+            
+            # Extract text from response
+            if hasattr(response, 'text') and response.text:
+                return str(response.text).strip()
+            
+            # Fallback: check response.parts
+            if hasattr(response, 'parts') and response.parts:
+                text_parts = []
+                for part in response.parts:
+                    if hasattr(part, 'text') and part.text is not None:
+                        text_parts.append(str(part.text))
+                if text_parts:
+                    return ''.join(text_parts).strip()
+            
+            raise Exception("Failed to extract text from response: No text content found.")
+            
+        except Exception as e:
+            logger.error(f"Gemini content generation failed: {str(e)}")
+            raise Exception(f"Gemini content generation failed: {str(e)}")
+    
     async def generate_json(
         self,
         prompt: str,
@@ -388,6 +432,82 @@ Return your response as valid JSON only. Do not include any markdown formatting 
         except Exception as e:
             logger.error(f"Image generation failed: {str(e)}", exc_info=True)
             raise Exception(f"Image generation failed: {str(e)}")
+    
+    def generate_image_sync(
+        self,
+        prompt: str,
+        aspect_ratio: str = "1:1",
+        number_of_images: int = 1
+    ) -> List[bytes]:
+        """
+        Generate images synchronously - for Celery workers.
+        
+        Args:
+            prompt: Text prompt for image generation
+            aspect_ratio: Image aspect ratio (e.g., "1:1", "16:9", "9:16")
+            number_of_images: Number of images to generate
+        
+        Returns:
+            List of image data as bytes (decoded, ready to use)
+        """
+        try:
+            import base64
+            
+            model_name = self.image_model_name or "gemini-2.5-flash-image"
+            logger.info(f"[SYNC] Generating {number_of_images} image(s) with {model_name}")
+            
+            images = []
+            
+            for _ in range(number_of_images):
+                # Call API directly (synchronous)
+                response = self.genai_client.models.generate_content(
+                    model=model_name,
+                    contents=[prompt]
+                )
+                
+                # Process response parts
+                if hasattr(response, 'parts') and response.parts:
+                    for part in response.parts:
+                        if hasattr(part, 'inline_data') and part.inline_data is not None:
+                            try:
+                                inline_data = part.inline_data
+                                image_data = None
+                                
+                                if hasattr(inline_data, 'data'):
+                                    data = inline_data.data
+                                    
+                                    if isinstance(data, str):
+                                        try:
+                                            image_data = base64.b64decode(data)
+                                        except Exception:
+                                            continue
+                                    elif isinstance(data, bytes):
+                                        if data.startswith(b'iVBORw0K') or data.startswith(b'/9j/'):
+                                            try:
+                                                image_data = base64.b64decode(data)
+                                            except Exception:
+                                                continue
+                                        else:
+                                            image_data = data
+                                
+                                if image_data:
+                                    images.append(image_data)
+                                    logger.info(f"[SYNC] Added image {len(images)} ({len(image_data)} bytes)")
+                            except Exception:
+                                continue
+                
+                if images and number_of_images == 1:
+                    break
+            
+            if not images:
+                raise Exception("No valid images generated")
+            
+            logger.info(f"[SYNC] Successfully generated {len(images)} image(s)")
+            return images
+            
+        except Exception as e:
+            logger.error(f"[SYNC] Image generation failed: {str(e)}")
+            raise Exception(f"Image generation failed: {str(e)}")
         
     async def generate_video(
         self,
@@ -539,6 +659,112 @@ Return your response as valid JSON only. Do not include any markdown formatting 
         except Exception as e:
             logger.error(f"Gemini video generation failed: {str(e)}", exc_info=True)
             raise Exception(f"Gemini video generation failed: {str(e)}")
+    
+    def generate_video_sync(
+        self,
+        prompt: str,
+        duration_seconds: int = 5,
+        aspect_ratio: str = "16:9"
+    ) -> bytes:
+        """
+        Generate video synchronously - for Celery workers.
+        Uses time.sleep instead of asyncio.sleep.
+        
+        Args:
+            prompt: Text prompt for video generation
+            duration_seconds: Video duration in seconds
+            aspect_ratio: Video aspect ratio (e.g., "16:9", "9:16", "1:1")
+        
+        Returns:
+            Video data as bytes (MP4 format)
+        """
+        try:
+            import time
+            
+            model_name = self.video_model_name or "veo-3.1-generate-preview"
+            logger.info(f"[SYNC] Generating video with {model_name}, duration: {duration_seconds}s")
+            
+            # Configure video generation
+            config = None
+            if types and hasattr(types, 'GenerateVideosConfig'):
+                config = types.GenerateVideosConfig(
+                    aspect_ratio=aspect_ratio,
+                    duration_seconds=float(duration_seconds)
+                )
+            
+            # Start video generation
+            call_kwargs = {'model': model_name, 'prompt': prompt}
+            if config:
+                call_kwargs['config'] = config
+            
+            if hasattr(self.genai_client.models, 'generate_videos'):
+                operation = self.genai_client.models.generate_videos(**call_kwargs)
+            elif hasattr(self.genai_client, 'generate_videos'):
+                operation = self.genai_client.generate_videos(**call_kwargs)
+            else:
+                raise Exception("Video generation method not found")
+            
+            operation_name = operation.name if hasattr(operation, 'name') else str(operation)
+            logger.info(f"[SYNC] Video generation operation started: {operation_name}")
+            
+            # Poll the operation status (using time.sleep, not asyncio)
+            max_wait_time = 600  # 10 minutes max
+            wait_interval = 10  # Check every 10 seconds
+            elapsed_time = 0
+            
+            while not operation.done:
+                if elapsed_time >= max_wait_time:
+                    raise Exception(f"Video generation timed out after {max_wait_time} seconds")
+                
+                logger.info(f"[SYNC] Waiting for video... (elapsed: {elapsed_time}s)")
+                time.sleep(wait_interval)  # Sync sleep
+                elapsed_time += wait_interval
+                
+                # Get updated operation status
+                operation = self.genai_client.operations.get(operation)
+            
+            logger.info("[SYNC] Video generation completed!")
+            
+            # Check for errors
+            if hasattr(operation, 'error') and operation.error:
+                raise Exception(f"Video generation failed: {operation.error}")
+            
+            # Get video data
+            if not hasattr(operation, 'response') or not operation.response:
+                raise Exception("No response found after completion")
+            
+            if not hasattr(operation.response, 'generated_videos') or not operation.response.generated_videos:
+                raise Exception("No videos found in response")
+            
+            generated_video = operation.response.generated_videos[0]
+            
+            if not hasattr(generated_video, 'video') or not generated_video.video:
+                raise Exception("No video file available")
+            
+            # Download the video file
+            video_file = self.genai_client.files.download(file=generated_video.video)
+            
+            # Read video data
+            if hasattr(video_file, 'read'):
+                video_data = video_file.read()
+            elif hasattr(video_file, 'getvalue'):
+                video_data = video_file.getvalue()
+            elif isinstance(video_file, bytes):
+                video_data = video_file
+            else:
+                video_data = getattr(video_file, 'content', None)
+                if not video_data:
+                    raise Exception(f"Unable to extract video data from: {type(video_file)}")
+            
+            if not video_data:
+                raise Exception("Downloaded video file is empty")
+            
+            logger.info(f"[SYNC] Video generated successfully ({len(video_data)} bytes)")
+            return video_data
+            
+        except Exception as e:
+            logger.error(f"[SYNC] Video generation failed: {str(e)}")
+            raise Exception(f"Video generation failed: {str(e)}")
     
     async def generate_embeddings(
         self,

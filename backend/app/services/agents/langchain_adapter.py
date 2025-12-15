@@ -43,8 +43,60 @@ class LangChainLLMAdapter(BaseChatModel):
         run_manager: Optional[CallbackManagerForLLMRun] = None,
         **kwargs: Any,
     ) -> ChatResult:
-        """Synchronous generation - not used in async context"""
-        raise NotImplementedError("Use async generation instead")
+        """Synchronous generation for Celery workers"""
+        # Convert LangChain messages to prompt
+        system_instruction = None
+        user_prompt = ""
+        
+        for message in messages:
+            if isinstance(message, SystemMessage):
+                system_instruction = message.content
+            elif isinstance(message, HumanMessage):
+                user_prompt += message.content + "\n"
+            elif isinstance(message, AIMessage):
+                # Include AI messages in context
+                user_prompt += f"Assistant: {message.content}\n"
+        
+        # Filter out unsupported parameters
+        filtered_kwargs = {k: v for k, v in kwargs.items() 
+                          if k not in ['automatic_function_calling', 'functions', 'function_call']}
+        
+        try:
+            # Check if the LLM service has a sync method
+            if hasattr(self.llm_service, 'generate_content_sync'):
+                content = self.llm_service.generate_content_sync(
+                    prompt=user_prompt.strip(),
+                    system_instruction=system_instruction,
+                    temperature=self.temperature,
+                    max_tokens=filtered_kwargs.get("max_tokens", 2048),
+                )
+            else:
+                # Fallback: run async method in a new event loop
+                import asyncio
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                
+                content = loop.run_until_complete(
+                    self.llm_service.generate_content(
+                        prompt=user_prompt.strip(),
+                        system_instruction=system_instruction,
+                        temperature=self.temperature,
+                        max_tokens=filtered_kwargs.get("max_tokens", 2048),
+                    )
+                )
+            
+            # Create LangChain response
+            message = AIMessage(content=content)
+            generation = ChatGeneration(message=message)
+            
+            return ChatResult(generations=[generation])
+            
+        except Exception as e:
+            logger.error(f"LangChain adapter sync generation failed: {str(e)}")
+            raise
     
     async def _agenerate(
         self,

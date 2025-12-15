@@ -1,77 +1,58 @@
 "use client"
 
-import { useEffect, useState, useCallback, useRef } from "react"
+import { useEffect, useState, useCallback } from "react"
 import { useParams, useRouter } from "next/navigation"
-import ReactMarkdown from 'react-markdown';
 import { cn } from "@/lib/utils"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
-import { Separator } from "@/components/ui/separator"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { apiClient } from "@/lib/api"
 import { useToast } from "@/components/ui/use-toast"
 import { 
-  ArrowLeft, CheckCircle2, Loader2, DollarSign, Calendar, 
-  Target, ChevronDown, ChevronRight, Clock, Play, Send,
-  MessageSquare, RefreshCw, Sparkles, Image as ImageIcon, Video, Wand2,
-  Bot, ThumbsUp, ThumbsDown, Download
+  ArrowLeft, CheckCircle2, Loader2, Plus, X, Sparkles, 
+  Image as ImageIcon, Video, Type, FileText, BarChart3,
+  Link as LinkIcon, Building2, MousePointerClick, RefreshCw,
+  Youtube, ChevronRight, AlertCircle, Trash2, Download,
+  Wand2, Send, MessageSquare
 } from "lucide-react"
 
-interface StepResult {
-  content?: string
-  image_urls?: string[]
-  video_urls?: string[]
-  research_data?: any
-  executed_at?: string
-  error?: string
-}
-
-interface PlanStep {
+// Types
+interface Headline {
   id: string
-  title: string
-  description: string
-  actions: string[]
-  time_estimate?: string
-  status: "pending" | "in_progress" | "completed" | "failed"
-  task_type?: string
-  result?: StepResult
-  execution_id?: string
+  text: string
+  type: "short" | "long"
 }
 
-interface AdSet {
-  name: string
-  audience_type: string
-  description: string
-  budget_percentage: number
+interface Description {
+  id: string
+  text: string
 }
 
-interface CampaignPlan {
-  overview: string
-  steps: PlanStep[]
-  recommended_ad_sets: AdSet[]
-  priority_metrics: string[]
-  research_insights?: string[]
+interface CampaignAsset {
+  id: string
+  asset_type: string
+  url?: string
+  status: string
+  platform?: string
 }
 
 interface Campaign {
   id: string
   name: string
   description?: string
-  objective_type?: string
-  campaign_type?: string
-  channels: string[]
   status: string
+  channels: string[]
   total_budget?: number
-  currency?: string
-  start_date?: string
-  end_date?: string
-  plan?: CampaignPlan
-  product_brief?: string
-  creative_preference?: string
-  target_audience?: Record<string, any>
-  metrics?: Record<string, any>
+  final_url?: string
+  business_name?: string
+  call_to_action?: string
+  headlines?: Headline[]
+  descriptions?: Description[]
+  ad_strength?: string
+  plan?: any
   created_at: string
 }
 
@@ -80,7 +61,41 @@ interface ChatMessage {
   role: "user" | "assistant"
   content: string
   timestamp: Date
-  isPinned?: boolean
+}
+
+// Ad Strength Component
+function AdStrengthIndicator({ strength }: { strength: string }) {
+  const getStrengthConfig = (s: string) => {
+    switch (s) {
+      case "excellent":
+        return { color: "bg-green-500", text: "Excellent", width: "100%", textColor: "text-green-600" }
+      case "good":
+        return { color: "bg-blue-500", text: "Good", width: "75%", textColor: "text-blue-600" }
+      case "average":
+        return { color: "bg-yellow-500", text: "Average", width: "50%", textColor: "text-yellow-600" }
+      case "poor":
+        return { color: "bg-orange-500", text: "Poor", width: "25%", textColor: "text-orange-600" }
+      default:
+        return { color: "bg-gray-400", text: "Incomplete", width: "10%", textColor: "text-gray-500" }
+    }
+  }
+  
+  const config = getStrengthConfig(strength)
+  
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-medium">Ad Strength</span>
+        <span className={cn("text-sm font-semibold", config.textColor)}>{config.text}</span>
+      </div>
+      <div className="h-2 bg-muted rounded-full overflow-hidden">
+        <div 
+          className={cn("h-full transition-all duration-500", config.color)}
+          style={{ width: config.width }}
+        />
+      </div>
+    </div>
+  )
 }
 
 export default function CampaignWorkspacePage() {
@@ -90,31 +105,45 @@ export default function CampaignWorkspacePage() {
   
   const [campaign, setCampaign] = useState<Campaign | null>(null)
   const [loading, setLoading] = useState(true)
-  const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set())
-  const [updatingStep, setUpdatingStep] = useState<string | null>(null)
-  const [regeneratingPlan, setRegeneratingPlan] = useState(false)
+  const [saving, setSaving] = useState(false)
+  
+  // Headlines state
+  const [headlines, setHeadlines] = useState<Headline[]>([])
+  const [newShortHeadline, setNewShortHeadline] = useState("")
+  const [newLongHeadline, setNewLongHeadline] = useState("")
+  
+  // Descriptions state
+  const [descriptions, setDescriptions] = useState<Description[]>([])
+  const [newDescription, setNewDescription] = useState("")
+  
+  // Assets state
+  const [images, setImages] = useState<CampaignAsset[]>([])
+  const [videos, setVideos] = useState<CampaignAsset[]>([])
+  const [generatingImages, setGeneratingImages] = useState(false)
+  const [generatingVideo, setGeneratingVideo] = useState(false)
+  
+  // Text generation states
+  const [generatingShortHeadlines, setGeneratingShortHeadlines] = useState(false)
+  const [generatingLongHeadlines, setGeneratingLongHeadlines] = useState(false)
+  const [generatingDescriptions, setGeneratingDescriptions] = useState(false)
   
   // Chat state
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [chatInput, setChatInput] = useState("")
   const [sendingMessage, setSendingMessage] = useState(false)
   
-  // Selected step for main canvas
-  const [selectedStep, setSelectedStep] = useState<PlanStep | null>(null)
-  
-  // Step execution state
-  const [executingStep, setExecutingStep] = useState<string | null>(null)
-  const executingStepsRef = useRef<Set<string>>(new Set())
+  // YouTube connection state
+  const [youtubeConnected, setYoutubeConnected] = useState(false)
 
   const loadCampaign = useCallback(async () => {
     try {
       const response = await apiClient.getCampaign(params.id as string) as Campaign
       setCampaign(response)
       
-      // Auto-select first step if plan exists
-      if (response.plan?.steps?.length && !selectedStep) {
-        setSelectedStep(response.plan.steps[0])
-      }
+      // Initialize from campaign data
+      setHeadlines(response.headlines || [])
+      setDescriptions(response.descriptions || [])
+      
     } catch (error: any) {
       toast({
         title: "Error",
@@ -124,214 +153,266 @@ export default function CampaignWorkspacePage() {
     } finally {
       setLoading(false)
     }
-  }, [params.id, toast, selectedStep])
+  }, [params.id, toast])
 
   useEffect(() => {
     loadCampaign()
   }, [loadCampaign])
 
-  // Poll for updates when campaign is in an active state or processing
+  // Check YouTube connection status
   useEffect(() => {
-    if (!campaign) return
-
-    // Statuses that require polling
-    const activeStatuses = ["processing", "creating", "generating", "pending", "running"]
-    const shouldPoll = activeStatuses.includes(campaign.status.toLowerCase()) 
-      || (campaign.status === "draft" && !campaign.plan) // Poll if plan is missing (potentially being generated)
-
-    if (shouldPoll) {
-      const intervalId = setInterval(() => {
-        loadCampaign()
-      }, 5000) // Poll every 5 seconds
-
-      return () => clearInterval(intervalId)
+    async function checkYoutubeStatus() {
+      try {
+        const response = await apiClient.getIntegrationStatus() as { platforms?: Array<{ platform: string; is_connected: boolean }> }
+        const youtube = response.platforms?.find(p => p.platform === 'youtube')
+        setYoutubeConnected(youtube?.is_connected || false)
+      } catch (error) {
+        // Silently fail - not critical
+      }
     }
-  }, [campaign?.status, campaign?.plan, loadCampaign])
+    checkYoutubeStatus()
+  }, [])
 
-  const toggleStepExpansion = (stepId: string) => {
-    const newExpanded = new Set(expandedSteps)
-    if (newExpanded.has(stepId)) {
-      newExpanded.delete(stepId)
-    } else {
-      newExpanded.add(stepId)
+  // Calculate ad strength based on assets
+  const calculateAdStrength = useCallback(() => {
+    const shortHeadlines = headlines.filter(h => h.type === "short").length
+    const longHeadlines = headlines.filter(h => h.type === "long").length
+    const descCount = descriptions.length
+    const imageCount = images.length
+    const videoCount = videos.length
+    
+    // Performance Max requirements
+    // Short headlines: 3-15, Long headlines: 1-5, Descriptions: 1-5
+    // Images: 3+, Videos: 1+
+    
+    let score = 0
+    if (shortHeadlines >= 3) score += 20
+    if (shortHeadlines >= 10) score += 10
+    if (longHeadlines >= 1) score += 15
+    if (longHeadlines >= 3) score += 5
+    if (descCount >= 1) score += 15
+    if (descCount >= 4) score += 5
+    if (imageCount >= 3) score += 20
+    if (imageCount >= 5) score += 5
+    if (videoCount >= 1) score += 5
+    
+    if (score >= 90) return "excellent"
+    if (score >= 70) return "good"
+    if (score >= 40) return "average"
+    if (score >= 20) return "poor"
+    return "incomplete"
+  }, [headlines, descriptions, images, videos])
+
+  // Add headline
+  const addHeadline = (type: "short" | "long") => {
+    const text = type === "short" ? newShortHeadline : newLongHeadline
+    if (!text.trim()) return
+    
+    const maxLength = type === "short" ? 30 : 90
+    if (text.length > maxLength) {
+      toast({
+        title: "Too long",
+        description: `${type === "short" ? "Short" : "Long"} headlines must be ${maxLength} characters or less`,
+        variant: "destructive",
+      })
+      return
     }
-    setExpandedSteps(newExpanded)
+    
+    const newHeadline: Headline = {
+      id: Date.now().toString(),
+      text: text.trim(),
+      type
+    }
+    
+    setHeadlines(prev => [...prev, newHeadline])
+    type === "short" ? setNewShortHeadline("") : setNewLongHeadline("")
   }
 
-  const updateStepStatus = async (stepId: string, newStatus: "pending" | "in_progress" | "completed") => {
+  // Remove headline
+  const removeHeadline = (id: string) => {
+    setHeadlines(prev => prev.filter(h => h.id !== id))
+  }
+
+  // Add description
+  const addDescription = () => {
+    if (!newDescription.trim()) return
+    
+    if (newDescription.length > 90) {
+      toast({
+        title: "Too long",
+        description: "Descriptions must be 90 characters or less",
+        variant: "destructive",
+      })
+      return
+    }
+    
+    const desc: Description = {
+      id: Date.now().toString(),
+      text: newDescription.trim()
+    }
+    
+    setDescriptions(prev => [...prev, desc])
+    setNewDescription("")
+  }
+
+  // Remove description
+  const removeDescription = (id: string) => {
+    setDescriptions(prev => prev.filter(d => d.id !== id))
+  }
+
+  // Generate headlines/descriptions with AI
+  const generateShortHeadlines = async () => {
     if (!campaign) return
     
-    setUpdatingStep(stepId)
+    setGeneratingShortHeadlines(true)
     try {
-      await apiClient.updatePlanStepStatus(campaign.id, stepId, newStatus)
+      const response = await apiClient.generateAdText(campaign.id, 'short_headlines', 5)
       
-      // Update local state
-      setCampaign(prev => {
-        if (!prev?.plan) return prev
-        return {
-          ...prev,
-          plan: {
-            ...prev.plan,
-            steps: prev.plan.steps.map(step => 
-              step.id === stepId ? { ...step, status: newStatus } : step
-            )
-          }
-        }
-      })
+      const newHeadlines: Headline[] = response.generated.map((text, i) => ({
+        id: `gen-short-${Date.now()}-${i}`,
+        text,
+        type: 'short' as const
+      }))
+      
+      setHeadlines(prev => [...prev, ...newHeadlines])
       
       toast({
-        title: "Updated",
-        description: `Step status changed to ${newStatus.replace('_', ' ')}`,
+        title: "Headlines Generated",
+        description: `Added ${newHeadlines.length} short headlines`,
       })
     } catch (error: any) {
       toast({
         title: "Error",
-        description: error.message || "Failed to update step",
+        description: error.message || "Failed to generate headlines",
         variant: "destructive",
       })
     } finally {
-      setUpdatingStep(null)
+      setGeneratingShortHeadlines(false)
     }
   }
 
-  const executeStepAI = async (stepId: string) => {
+  const generateLongHeadlines = async () => {
     if (!campaign) return
     
-    console.log('[ExecuteStepAI] Starting execution for step:', stepId)
-    setExecutingStep(stepId)
-    executingStepsRef.current.add(stepId)
-    
+    setGeneratingLongHeadlines(true)
     try {
-      // Trigger execution
-      console.log('[ExecuteStepAI] Calling API:', `/campaigns/${campaign.id}/steps/${stepId}/execute`)
-      const response = await apiClient.executeStep(campaign.id, stepId)
-      console.log('[ExecuteStepAI] API Response:', response)
+      const response = await apiClient.generateAdText(campaign.id, 'long_headlines', 3)
+      
+      const newHeadlines: Headline[] = response.generated.map((text, i) => ({
+        id: `gen-long-${Date.now()}-${i}`,
+        text,
+        type: 'long' as const
+      }))
+      
+      setHeadlines(prev => [...prev, ...newHeadlines])
       
       toast({
-        title: "Execution Started",
-        description: `${response.task_type.replace('_', ' ')} task started`,
-      })
-      
-      // Update local state to show in_progress
-      setCampaign(prev => {
-        if (!prev?.plan) return prev
-        return {
-          ...prev,
-          plan: {
-            ...prev.plan,
-            steps: prev.plan.steps.map(step => 
-              step.id === stepId ? { ...step, status: "in_progress" as const, task_type: response.task_type, execution_id: response.execution_id } : step
-            )
-          }
-        }
-      })
-      
-      // Poll for completion
-      const pollInterval = setInterval(async () => {
-        try {
-          console.log('[Poll] Checking step result for:', stepId)
-          const result = await apiClient.getStepResult(campaign.id, stepId)
-          console.log('[Poll] Result:', result)
-          
-          if (result.status === "completed" || result.status === "failed") {
-            console.log('[Poll] Step finished with status:', result.status)
-            clearInterval(pollInterval)
-            executingStepsRef.current.delete(stepId)
-            
-            // Reload the full campaign to get updated data
-            try {
-              const updatedCampaign = await apiClient.getCampaign(campaign.id) as Campaign
-              setCampaign(updatedCampaign)
-              
-              // Update selectedStep from the reloaded campaign
-              const updatedStep = updatedCampaign.plan?.steps.find(s => s.id === stepId)
-              if (updatedStep) {
-                setSelectedStep(updatedStep)
-              }
-            } catch (reloadError) {
-              console.error('[Poll] Failed to reload campaign:', reloadError)
-              // Fallback: update local state
-              setCampaign(prev => {
-                if (!prev?.plan) return prev
-                return {
-                  ...prev,
-                  plan: {
-                    ...prev.plan,
-                    steps: prev.plan.steps.map(step => 
-                      step.id === stepId ? { ...step, status: result.status as any, result: result.result } : step
-                    )
-                  }
-                }
-              })
-              setSelectedStep(prev => prev?.id === stepId ? { ...prev, status: result.status as any, result: result.result } : prev)
-            }
-            
-            if (result.status === "completed") {
-              toast({
-                title: "Step Completed",
-                description: "AI execution finished successfully",
-              })
-            } else {
-              toast({
-                title: "Execution Failed",
-                description: result.error || "Step execution failed",
-                variant: "destructive",
-              })
-            }
-            
-            if (executingStepsRef.current.size === 0) {
-              setExecutingStep(null)
-            }
-          }
-        } catch (e) {
-          console.error("Poll error:", e)
-        }
-      }, 3000) // Poll every 3 seconds
-      
-      // Clean up after 10 minutes max
-      setTimeout(() => {
-        clearInterval(pollInterval)
-        executingStepsRef.current.delete(stepId)
-        if (executingStepsRef.current.size === 0) {
-          setExecutingStep(null)
-        }
-      }, 600000)
-      
-    } catch (error: any) {
-      executingStepsRef.current.delete(stepId)
-      setExecutingStep(null)
-      toast({
-        title: "Error",
-        description: error.message || "Failed to execute step",
-        variant: "destructive",
-      })
-    }
-  }
-
-  const regeneratePlan = async () => {
-    if (!campaign) return
-    
-    setRegeneratingPlan(true)
-    try {
-      const response = await apiClient.generateCampaignPlan(campaign.id, true) as { plan: CampaignPlan }
-      
-      setCampaign(prev => prev ? { ...prev, plan: response.plan } : prev)
-      
-      toast({
-        title: "Plan Regenerated",
-        description: "AI has created a new campaign plan",
+        title: "Headlines Generated",
+        description: `Added ${newHeadlines.length} long headlines`,
       })
     } catch (error: any) {
       toast({
         title: "Error",
-        description: error.message || "Failed to regenerate plan",
+        description: error.message || "Failed to generate headlines",
         variant: "destructive",
       })
     } finally {
-      setRegeneratingPlan(false)
+      setGeneratingLongHeadlines(false)
     }
   }
 
+  const generateDescriptionsAI = async () => {
+    if (!campaign) return
+    
+    setGeneratingDescriptions(true)
+    try {
+      const response = await apiClient.generateAdText(campaign.id, 'descriptions', 3)
+      
+      const newDescriptions: Description[] = response.generated.map((text, i) => ({
+        id: `gen-desc-${Date.now()}-${i}`,
+        text
+      }))
+      
+      setDescriptions(prev => [...prev, ...newDescriptions])
+      
+      toast({
+        title: "Descriptions Generated",
+        description: `Added ${newDescriptions.length} descriptions`,
+      })
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to generate descriptions",
+        variant: "destructive",
+      })
+    } finally {
+      setGeneratingDescriptions(false)
+    }
+  }
+
+  // Save campaign data
+  const saveCampaign = async () => {
+    if (!campaign) return
+    
+    setSaving(true)
+    try {
+      // TODO: Implement API endpoint for updating campaign assets
+      await new Promise(resolve => setTimeout(resolve, 500)) // Simulated save
+      
+      toast({
+        title: "Saved",
+        description: "Campaign assets updated",
+      })
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to save",
+        variant: "destructive",
+      })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // Generate images with AI
+  const generateImages = async () => {
+    if (!campaign) return
+    
+    setGeneratingImages(true)
+    try {
+      toast({
+        title: "Generating Images",
+        description: "AI is creating images for your campaign...",
+      })
+      
+      // TODO: Call actual image generation API
+      await new Promise(resolve => setTimeout(resolve, 3000))
+      
+      // Mock response
+      const newImages: CampaignAsset[] = [
+        { id: Date.now().toString(), asset_type: "image", url: "https://via.placeholder.com/400x300/3b82f6/ffffff?text=Generated+1", status: "completed" },
+        { id: (Date.now() + 1).toString(), asset_type: "image", url: "https://via.placeholder.com/400x300/8b5cf6/ffffff?text=Generated+2", status: "completed" },
+        { id: (Date.now() + 2).toString(), asset_type: "image", url: "https://via.placeholder.com/400x300/ec4899/ffffff?text=Generated+3", status: "completed" },
+      ]
+      
+      setImages(prev => [...prev, ...newImages])
+      
+      toast({
+        title: "Images Generated",
+        description: `Created ${newImages.length} new images`,
+      })
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to generate images",
+        variant: "destructive",
+      })
+    } finally {
+      setGeneratingImages(false)
+    }
+  }
+
+  // AI Chat
   const sendChatMessage = async () => {
     if (!chatInput.trim() || !campaign) return
     
@@ -347,54 +428,24 @@ export default function CampaignWorkspacePage() {
     setSendingMessage(true)
     
     try {
-      setSendingMessage(true)
       const response = await apiClient.campaignChat(campaign.id, chatInput.trim(), chatMessages)
       
       const aiMessage: ChatMessage = {
         id: (Date.now() + 1).toString(),
-        role: "assistant", // Fixed: role should be "assistant" not "AI" based on ChatMessage type
+        role: "assistant",
         content: response.response,
         timestamp: new Date()
       }
       setChatMessages(prev => [...prev, aiMessage])
-    } catch (error) {
-      console.error("Failed to send chat message:", error)
+    } catch (error: any) {
       toast({
         title: "Error",
-        description: "Failed to send message. Please try again.",
-        variant: "destructive"
+        description: error.message || "Failed to send message",
+        variant: "destructive",
       })
     } finally {
       setSendingMessage(false)
     }
-  }
-
-  const getStepStatusIcon = (status: string) => {
-    switch (status) {
-      case "completed":
-        return <CheckCircle2 className="h-5 w-5 text-green-500" />
-      case "in_progress":
-        return <Play className="h-5 w-5 text-blue-500" />
-      default:
-        return <Clock className="h-5 w-5 text-muted-foreground" />
-    }
-  }
-
-  const getStepStatusBadge = (status: string) => {
-    switch (status) {
-      case "completed":
-        return <Badge className="bg-green-500/10 text-green-600 border-green-500/20">Completed</Badge>
-      case "in_progress":
-        return <Badge className="bg-blue-500/10 text-blue-600 border-blue-500/20">In Progress</Badge>
-      default:
-        return <Badge variant="outline">Pending</Badge>
-    }
-  }
-
-  const calculateProgress = () => {
-    if (!campaign?.plan?.steps?.length) return 0
-    const completed = campaign.plan.steps.filter(s => s.status === "completed").length
-    return Math.round((completed / campaign.plan.steps.length) * 100)
   }
 
   if (loading) {
@@ -415,548 +466,515 @@ export default function CampaignWorkspacePage() {
     )
   }
 
+  const adStrength = calculateAdStrength()
+  const shortHeadlineCount = headlines.filter(h => h.type === "short").length
+  const longHeadlineCount = headlines.filter(h => h.type === "long").length
+
   return (
     <div className="h-[calc(100vh-6rem)] flex flex-col gap-4">
       {/* Header */}
-      {/* Premium Header */}
-      <header className="flex items-center justify-between px-1 flex-shrink-0 mb-2">
+      <header className="flex items-center justify-between px-1 flex-shrink-0">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" className="h-10 w-10 rounded-full hover:bg-white/5" onClick={() => router.back()}>
+          <Button variant="ghost" size="icon" className="h-10 w-10 rounded-full" onClick={() => router.back()}>
             <ArrowLeft className="h-5 w-5" />
           </Button>
           <div>
             <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-bold tracking-tight bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent">{campaign.name}</h1>
-              <Badge variant={campaign.status === "draft" ? "secondary" : "default"} className="uppercase text-[10px] tracking-wider px-2 py-0.5 h-5">
-                {campaign.status}
+              <h1 className="text-2xl font-bold tracking-tight">{campaign.name}</h1>
+              <Badge variant="secondary" className="uppercase text-[10px]">
+                Performance Max
               </Badge>
             </div>
-            <p className="text-sm text-muted-foreground/80">Campaign Workspace</p>
+            <p className="text-sm text-muted-foreground">Build your campaign assets</p>
           </div>
         </div>
         <div className="flex items-center gap-3">
-           {campaign.status === "draft" && (
-            <Button 
-               onClick={() => router.push(`/dashboard/campaigns/${campaign.id}`)} 
-               size="sm" 
-               className="h-9 px-4 bg-primary hover:bg-primary/90 shadow-lg shadow-primary/20 rounded-lg"
-            >
-              <CheckCircle2 className="h-4 w-4 mr-2" />
-              Review & Deploy
-            </Button>
-          )}
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={saveCampaign}
+            disabled={saving}
+          >
+            {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
+            Save
+          </Button>
+          <Button 
+            size="sm" 
+            className="bg-primary"
+            onClick={() => router.push(`/dashboard/campaigns/${campaign.id}`)}
+          >
+            Review & Launch
+            <ChevronRight className="h-4 w-4 ml-1" />
+          </Button>
         </div>
       </header>
 
-      {/* Main Content Grid */}
-      <div className="flex-1 grid grid-cols-12 gap-6 min-h-0">
+      {/* Main Content */}
+      <div className="flex-1 grid grid-cols-12 gap-4 min-h-0">
         
-        {/* Left Column - Plan & Progress */}
-        <section className="col-span-3 flex flex-col min-h-0 glass-panel rounded-2xl overflow-hidden border-white/5 shadow-2xl shadow-black/20">
-          <div className="p-4 border-b bg-muted/20">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="font-semibold text-sm flex items-center gap-2">
-                <Target className="h-4 w-4 text-primary" />
-                Campaign Plan
-              </h2>
-              <Button 
-                variant="ghost" 
-                size="icon"
-                className="h-6 w-6"
-                onClick={regeneratePlan}
-                disabled={regeneratingPlan}
-              >
-                {regeneratingPlan ? (
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                ) : (
-                  <RefreshCw className="h-3 w-3" />
-                )}
-              </Button>
-            </div>
-            {/* Progress Bar */}
-            <div className="space-y-1.5">
-              <div className="flex justify-between text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
-                <span>Progress</span>
-                <span>{calculateProgress()}%</span>
+        {/* Left Panel - Text Assets */}
+        <div className="col-span-4 flex flex-col gap-4 min-h-0">
+          
+          {/* Ad Strength Card */}
+          <Card className="flex-shrink-0">
+            <CardContent className="p-4">
+              <AdStrengthIndicator strength={adStrength} />
+              <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
+                <div className="p-2 rounded bg-muted/50">
+                  <div className="font-semibold">{shortHeadlineCount}/15</div>
+                  <div className="text-muted-foreground">Headlines</div>
+                </div>
+                <div className="p-2 rounded bg-muted/50">
+                  <div className="font-semibold">{descriptions.length}/5</div>
+                  <div className="text-muted-foreground">Descriptions</div>
+                </div>
+                <div className="p-2 rounded bg-muted/50">
+                  <div className="font-semibold">{images.length}</div>
+                  <div className="text-muted-foreground">Images</div>
+                </div>
               </div>
-              <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                <div 
-                  className="h-full bg-primary transition-all duration-500 ease-out"
-                  style={{ width: `${calculateProgress()}%` }}
-                />
+            </CardContent>
+          </Card>
+          
+          {/* Campaign Settings */}
+          <Card className="flex-shrink-0">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Building2 className="h-4 w-4" />
+                Campaign Settings
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex items-center gap-2 text-sm">
+                <LinkIcon className="h-4 w-4 text-muted-foreground" />
+                <span className="text-muted-foreground">URL:</span>
+                <span className="truncate flex-1">{campaign.final_url || "Not set"}</span>
               </div>
-            </div>
-          </div>
-
-          <ScrollArea className="flex-1">
-            <div className="p-4 space-y-4">
-              {campaign.plan ? (
-                <>
-                  {/* Overview */}
-                  <div className="p-3 bg-primary/5 rounded-lg border border-primary/10">
-                    <p className="text-xs leading-relaxed text-muted-foreground">{campaign.plan.overview}</p>
-                  </div>
-
-                  {/* Research Insights */}
-                  {campaign.plan.research_insights && campaign.plan.research_insights.length > 0 && (
-                    <div className="p-3 bg-blue-50/50 dark:bg-blue-900/10 rounded-lg border border-blue-100 dark:border-blue-900/20">
-                      <p className="text-[10px] font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wider mb-2 flex items-center gap-1">
-                        <Sparkles className="h-3 w-3" />
-                        Research Insights
-                      </p>
-                      <ul className="space-y-1.5">
-                        {campaign.plan.research_insights.map((insight: string, i: number) => (
-                          <li key={i} className="text-xs text-muted-foreground flex items-start gap-2">
-                            <span className="mt-1.5 h-1 w-1 rounded-full bg-blue-400 shrink-0" />
-                            {insight}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  
-                  {/* Steps */}
-                  <div className="space-y-3">
-                    {campaign.plan.steps.map((step, index) => (
-                      <div 
-                        key={step.id}
-                        className={`group relative rounded-xl transition-all duration-300 backdrop-blur-sm ${
-                          selectedStep?.id === step.id 
-                            ? 'border border-primary/50 bg-primary/10 ring-1 ring-primary/20 shadow-lg shadow-primary/5' 
-                            : 'border border-white/5 bg-white/5 hover:bg-white/10 hover:border-white/10'
-                        }`}
+              <div className="flex items-center gap-2 text-sm">
+                <Building2 className="h-4 w-4 text-muted-foreground" />
+                <span className="text-muted-foreground">Business:</span>
+                <span>{campaign.business_name || "Not set"}</span>
+              </div>
+              <div className="flex items-center gap-2 text-sm">
+                <MousePointerClick className="h-4 w-4 text-muted-foreground" />
+                <span className="text-muted-foreground">CTA:</span>
+                <Badge variant="outline" className="capitalize">
+                  {campaign.call_to_action?.replace("_", " ") || "Learn More"}
+                </Badge>
+              </div>
+            </CardContent>
+          </Card>
+          
+          {/* Headlines */}
+          <Card className="flex-1 min-h-0 flex flex-col">
+            <CardHeader className="pb-3 flex-shrink-0">
+              <CardTitle className="text-sm flex items-center justify-between">
+                <span className="flex items-center gap-2">
+                  <Type className="h-4 w-4" />
+                  Headlines
+                </span>
+                <span className="text-xs font-normal text-muted-foreground">
+                  {shortHeadlineCount} short, {longHeadlineCount} long
+                </span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="flex-1 overflow-hidden flex flex-col gap-3">
+              {/* Short headlines */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-medium text-muted-foreground">
+                    Short Headlines (30 chars max) — min 3
+                  </label>
+                  <Button 
+                    size="sm" 
+                    variant="ghost" 
+                    className="h-6 text-xs px-2"
+                    onClick={generateShortHeadlines}
+                    disabled={generatingShortHeadlines}
+                  >
+                    {generatingShortHeadlines ? (
+                      <><Loader2 className="h-3 w-3 mr-1 animate-spin" />Generating...</>
+                    ) : (
+                      <><Wand2 className="h-3 w-3 mr-1" />Generate</>
+                    )}
+                  </Button>
+                </div>
+                <div className="flex gap-2">
+                  <Input 
+                    placeholder="Add a headline..."
+                    value={newShortHeadline}
+                    onChange={(e) => setNewShortHeadline(e.target.value)}
+                    maxLength={30}
+                    onKeyDown={(e) => e.key === "Enter" && addHeadline("short")}
+                    className="h-8 text-sm"
+                  />
+                  <Button size="sm" variant="secondary" onClick={() => addHeadline("short")} className="h-8 px-2">
+                    <Plus className="h-4 w-4" />
+                  </Button>
+                </div>
+                <div className="text-right text-[10px] text-muted-foreground">{newShortHeadline.length}/30</div>
+              </div>
+              
+              {/* Long headlines */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-medium text-muted-foreground">
+                    Long Headlines (90 chars max) — min 1
+                  </label>
+                  <Button 
+                    size="sm" 
+                    variant="ghost" 
+                    className="h-6 text-xs px-2"
+                    onClick={generateLongHeadlines}
+                    disabled={generatingLongHeadlines}
+                  >
+                    {generatingLongHeadlines ? (
+                      <><Loader2 className="h-3 w-3 mr-1 animate-spin" />Generating...</>
+                    ) : (
+                      <><Wand2 className="h-3 w-3 mr-1" />Generate</>
+                    )}
+                  </Button>
+                </div>
+                <div className="flex gap-2">
+                  <Input 
+                    placeholder="Add a long headline..."
+                    value={newLongHeadline}
+                    onChange={(e) => setNewLongHeadline(e.target.value)}
+                    maxLength={90}
+                    onKeyDown={(e) => e.key === "Enter" && addHeadline("long")}
+                    className="h-8 text-sm"
+                  />
+                  <Button size="sm" variant="secondary" onClick={() => addHeadline("long")} className="h-8 px-2">
+                    <Plus className="h-4 w-4" />
+                  </Button>
+                </div>
+                <div className="text-right text-[10px] text-muted-foreground">{newLongHeadline.length}/90</div>
+              </div>
+              
+              {/* Headlines list */}
+              <ScrollArea className="flex-1">
+                <div className="space-y-1.5 pr-2">
+                  {headlines.map((h) => (
+                    <div 
+                      key={h.id} 
+                      className={cn(
+                        "flex items-center gap-2 p-2 rounded-md text-sm group",
+                        h.type === "long" ? "bg-purple-500/10" : "bg-muted/50"
+                      )}
+                    >
+                      <Badge variant="outline" className="text-[10px] shrink-0">
+                        {h.type === "short" ? "S" : "L"}
+                      </Badge>
+                      <span className="flex-1 truncate">{h.text}</span>
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={() => removeHeadline(h.id)}
                       >
-                         {/* Connection Line (visual only) */}
-                         {index < campaign.plan!.steps.length - 1 && (
-                            <div className="absolute left-[19px] bottom-[-14px] w-[2px] h-[14px] bg-border" />
-                         )}
+                        <X className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  ))}
+                  {headlines.length === 0 && (
+                    <p className="text-xs text-muted-foreground text-center py-4">
+                      Add at least 3 short headlines and 1 long headline
+                    </p>
+                  )}
+                </div>
+              </ScrollArea>
+            </CardContent>
+          </Card>
+        </div>
 
-                        <div 
-                          className="p-3 cursor-pointer"
-                          onClick={() => {
-                            setSelectedStep(step)
-                            toggleStepExpansion(step.id)
-                          }}
-                        >
-                          <div className="flex items-start gap-3">
-                            <div className="flex-shrink-0 mt-0.5">
-                              {getStepStatusIcon(step.status)}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center justify-between gap-2">
-                                <span className={cn(
-                                  "text-sm font-medium leading-none transition-colors",
-                                  selectedStep?.id === step.id ? "text-primary" : "text-foreground"
-                                )}>
-                                  {step.title}
-                                </span>
-                              </div>
-                               <div className="flex items-center gap-2 mt-1.5">
-                                  {step.time_estimate && (
-                                    <span className="text-[10px] text-muted-foreground flex items-center gap-1 bg-muted px-1.5 py-0.5 rounded">
-                                      <Clock className="h-3 w-3" />
-                                      {step.time_estimate}
-                                    </span>
-                                  )}
-                               </div>
-                            </div>
-                             {expandedSteps.has(step.id) ? (
-                                <ChevronDown className="h-4 w-4 text-muted-foreground/50" />
-                              ) : (
-                                <ChevronRight className="h-4 w-4 text-muted-foreground/50" />
-                              )}
-                          </div>
+        {/* Center Panel - Visual Assets */}
+        <div className="col-span-5 flex flex-col gap-4 min-h-0">
+          
+          {/* Images */}
+          <Card className="flex-1 min-h-0 flex flex-col">
+            <CardHeader className="pb-3 flex-shrink-0">
+              <CardTitle className="text-sm flex items-center justify-between">
+                <span className="flex items-center gap-2">
+                  <ImageIcon className="h-4 w-4" />
+                  Images
+                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-normal text-muted-foreground">{images.length} images</span>
+                  <Button 
+                    size="sm" 
+                    variant="default"
+                    onClick={generateImages}
+                    disabled={generatingImages}
+                    className="h-7 text-xs"
+                  >
+                    {generatingImages ? (
+                      <><Loader2 className="h-3 w-3 mr-1 animate-spin" />Generating...</>
+                    ) : (
+                      <><Wand2 className="h-3 w-3 mr-1" />Generate</>
+                    )}
+                  </Button>
+                </div>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="flex-1 overflow-hidden">
+              <ScrollArea className="h-full">
+                {images.length > 0 ? (
+                  <div className="grid grid-cols-3 gap-3 pr-2">
+                    {images.map((img) => (
+                      <div key={img.id} className="relative group rounded-lg overflow-hidden border aspect-square">
+                        <img 
+                          src={img.url} 
+                          alt="Campaign image" 
+                          className="w-full h-full object-cover"
+                        />
+                        <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                          <Button size="icon" variant="secondary" className="h-8 w-8">
+                            <Download className="h-4 w-4" />
+                          </Button>
+                          <Button 
+                            size="icon" 
+                            variant="destructive" 
+                            className="h-8 w-8"
+                            onClick={() => setImages(prev => prev.filter(i => i.id !== img.id))}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
                         </div>
-                        
-                        {expandedSteps.has(step.id) && (
-                          <div className="px-3 pb-3 pt-1 border-t border-dashed mx-3 mt-1">
-                            <p className="text-xs text-muted-foreground leading-relaxed">{step.description}</p>
-                          </div>
-                        )}
                       </div>
                     ))}
                   </div>
-
-                   {/* Priority Metrics */}
-                    {campaign.plan.priority_metrics.length > 0 && (
-                      <div className="mt-6">
-                        <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">Key Metrics</p>
-                        <div className="flex flex-wrap gap-1.5">
-                          {campaign.plan.priority_metrics.map(metric => (
-                            <Badge key={metric} variant="outline" className="text-[10px] font-normal border-dashed">{metric}</Badge>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                </>
-              ) : (
-                 <div className="flex flex-col items-center justify-center h-48 text-center">
-                    <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mb-3">
-                       <Sparkles className="h-6 w-6 text-muted-foreground" />
-                    </div>
-                    <p className="text-sm font-medium mb-1">No Plan Yet</p>
-                    <p className="text-xs text-muted-foreground mb-4 max-w-[180px]">Generate a data-driven plan for your campaign</p>
-                    <Button size="sm" onClick={regeneratePlan} disabled={regeneratingPlan}>
-                      {regeneratingPlan ? <Loader2 className="h-3 w-3 mr-2 animate-spin" /> : <Wand2 className="h-3 w-3 mr-2" />}
-                      Generate
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-48 text-center">
+                    <ImageIcon className="h-12 w-12 text-muted-foreground/30 mb-3" />
+                    <p className="text-sm text-muted-foreground mb-3">No images yet</p>
+                    <Button 
+                      size="sm" 
+                      onClick={generateImages}
+                      disabled={generatingImages}
+                    >
+                      <Wand2 className="h-4 w-4 mr-2" />
+                      Generate with AI
                     </Button>
                   </div>
+                )}
+              </ScrollArea>
+            </CardContent>
+          </Card>
+          
+          {/* Videos */}
+          <Card className="flex-shrink-0">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm flex items-center justify-between">
+                <span className="flex items-center gap-2">
+                  <Video className="h-4 w-4" />
+                  Videos
+                </span>
+                <div className="flex items-center gap-2">
+                  {!youtubeConnected ? (
+                    <Button 
+                      size="sm" 
+                      variant="outline" 
+                      className="h-7 text-xs"
+                      onClick={async () => {
+                        try {
+                          // Get OAuth URL using authenticated API client
+                          const url = await apiClient.getOAuthInitUrl('youtube')
+                          window.location.href = url
+                        } catch (error: any) {
+                          toast({
+                            title: "Error",
+                            description: error.message || "Failed to initiate YouTube connection",
+                            variant: "destructive",
+                          })
+                        }
+                      }}
+                    >
+                      <Youtube className="h-3 w-3 mr-1 text-red-500" />
+                      Connect YouTube
+                    </Button>
+                  ) : (
+                    <span className="text-xs text-green-600 flex items-center gap-1">
+                      <Youtube className="h-3 w-3 text-red-500" />
+                      YouTube Connected
+                    </span>
+                  )}
+                  <Button size="sm" variant="default" className="h-7 text-xs" disabled={generatingVideo}>
+                    <Wand2 className="h-3 w-3 mr-1" />
+                    Generate
+                  </Button>
+                </div>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {videos.length > 0 ? (
+                <div className="grid gap-3">
+                  {videos.map((vid) => (
+                    <div key={vid.id} className="rounded-lg border overflow-hidden">
+                      <video src={vid.url} controls className="w-full" />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="flex items-center gap-4 p-4 border border-dashed rounded-lg">
+                  <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center">
+                    <Video className="h-6 w-6 text-muted-foreground" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-medium">Add videos to your campaign</p>
+                    <p className="text-xs text-muted-foreground">
+                      Generate AI videos or connect YouTube to link existing ones
+                    </p>
+                  </div>
+                </div>
               )}
-            </div>
-          </ScrollArea>
-        </section>
-
-        {/* Center Column - Main Canvas */}
-        <main className="col-span-6 flex flex-col min-h-0 glass-panel rounded-2xl overflow-hidden border-white/5 shadow-2xl shadow-black/20 relative">
-          {/* Subtle glow behind canvas */}
-          <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent opacity-50" />
-          {selectedStep ? (
-             <div className="flex flex-col h-full">
-                <div className="p-6 border-b">
-                   <div className="flex items-start justify-between mb-2">
-                      <div className="space-y-1">
-                         <h2 className="text-lg font-semibold">{selectedStep.title}</h2>
-                         <div className="flex items-center gap-2">
-                            {getStepStatusBadge(selectedStep.status)}
-                            {selectedStep.time_estimate && (
-                               <span className="text-xs text-muted-foreground flex items-center gap-1">
-                                  <Clock className="h-3 w-3" />
-                                  {selectedStep.time_estimate}
-                               </span>
-                            )}
-                         </div>
-                      </div>
-                      <div className="flex gap-2">
-                        {/* Execute AI Button */}
-                        {selectedStep.status !== "in_progress" && (
-                          <Button 
-                            size="sm"
-                            className="h-8 bg-gradient-to-r from-purple-500 to-blue-500 hover:from-purple-600 hover:to-blue-600 text-white"
-                            onClick={() => executeStepAI(selectedStep.id)}
-                            disabled={executingStep === selectedStep.id}
-                          >
-                            {executingStep === selectedStep.id ? (
-                              <>
-                                <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin"/>
-                                Executing...
-                              </>
-                            ) : (
-                              <>
-                                <Sparkles className="h-3.5 w-3.5 mr-2"/>
-                                {selectedStep.status === "completed" || selectedStep.status === "failed" ? "Re-Execute AI" : "Execute AI"}
-                              </>
-                            )}
-                          </Button>
-                        )}
-                        {selectedStep.status === "in_progress" && (
-                          <div className="flex items-center gap-2 h-8 px-3 rounded-md bg-blue-50 text-blue-600 text-sm">
-                            <Loader2 className="h-3.5 w-3.5 animate-spin"/>
-                            <span>AI is working...</span>
-                          </div>
-                        )}
-                        {/* Contextual Top Actions */}
-                         {selectedStep.title.toLowerCase().includes("creative") && (
-                            <Button variant="outline" size="sm" className="h-8">
-                               <Sparkles className="h-3.5 w-3.5 mr-2" />
-                               Creative Assistant
-                            </Button>
-                         )}
-                      </div>
-                   </div>
-                   <p className="text-sm text-muted-foreground leading-relaxed">
-                      {selectedStep.description}
-                   </p>
+            </CardContent>
+          </Card>
+          
+          {/* Descriptions */}
+          <Card className="flex-shrink-0">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm flex items-center justify-between">
+                <span className="flex items-center gap-2">
+                  <FileText className="h-4 w-4" />
+                  Descriptions
+                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-normal text-muted-foreground">{descriptions.length}/5</span>
+                  <Button 
+                    size="sm" 
+                    variant="ghost" 
+                    className="h-6 text-xs px-2"
+                    onClick={generateDescriptionsAI}
+                    disabled={generatingDescriptions}
+                  >
+                    {generatingDescriptions ? (
+                      <><Loader2 className="h-3 w-3 mr-1 animate-spin" />Generating...</>
+                    ) : (
+                      <><Wand2 className="h-3 w-3 mr-1" />Generate</>
+                    )}
+                  </Button>
                 </div>
-                
-                <ScrollArea className="flex-1 p-6">
-                   <div className="space-y-8">
-                      {/* Check-list style Actions */}
-                       {selectedStep.actions.length > 0 && (
-                        <div className="space-y-4">
-                           <h3 className="text-sm font-medium flex items-center gap-2 text-foreground/80">
-                              <CheckCircle2 className="h-4 w-4" />
-                              Action Items
-                           </h3>
-                           <div className="grid gap-3">
-                              {selectedStep.actions.map((action, i) => (
-                                 <div key={i} className="flex items-start gap-3 p-4 rounded-lg border bg-card/50 hover:bg-accent/50 transition-colors">
-                                    <div className="h-5 w-5 rounded-full border-2 border-muted-foreground/30 flex-shrink-0 mt-0.5 hover:border-primary cursor-pointer transition-colors" />
-                                    <span className="text-sm leading-snug">{action}</span>
-                                 </div>
-                              ))}
-                           </div>
-                        </div>
-                       )}
-
-                       {/* Step Execution Result */}
-                       {selectedStep.result && (
-                         <div className="space-y-4">
-                           <h3 className="text-sm font-medium flex items-center gap-2 text-foreground/80">
-                              <Sparkles className="h-4 w-4 text-purple-500" />
-                              AI Generated Result
-                              {selectedStep.result.executed_at && (
-                                <span className="text-xs font-normal text-muted-foreground ml-2">
-                                  {new Date(selectedStep.result.executed_at).toLocaleString()}
-                                </span>
-                              )}
-                           </h3>
-                           
-                           {/* Error Display */}
-                           {selectedStep.result.error && (
-                             <div className="p-4 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm">
-                               <strong>Error:</strong> {selectedStep.result.error}
-                             </div>
-                           )}
-                           
-                           {/* Text Content */}
-                           {selectedStep.result.content && !selectedStep.result.error && (
-                             <div className="p-5 rounded-lg glass-card border-white/5 shadow-inner">
-                               <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:font-semibold prose-a:text-primary">
-                                 <ReactMarkdown>{selectedStep.result.content}</ReactMarkdown>
-                               </div>
-                             </div>
-                           )}
-                           
-                           {/* Generated Images */}
-                           {selectedStep.result.image_urls && selectedStep.result.image_urls.length > 0 && (
-                             <div className="space-y-3">
-                               <h4 className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-                                 <ImageIcon className="h-3.5 w-3.5" />
-                                 Generated Images ({selectedStep.result.image_urls.length})
-                               </h4>
-                               <div className="grid grid-cols-2 gap-4">
-                                 {selectedStep.result.image_urls.map((url, i) => (
-                                   <div key={i} className="relative group rounded-lg overflow-hidden border">
-                                     <img 
-                                       src={url} 
-                                       alt={`Generated image ${i + 1}`} 
-                                       className="w-full h-48 object-cover"
-                                     />
-                                     <a 
-                                       href={url} 
-                                       download 
-                                       target="_blank"
-                                       className="absolute bottom-2 right-2 p-2 rounded-lg bg-black/50 text-white opacity-0 group-hover:opacity-100 transition-opacity"
-                                     >
-                                       <Download className="h-4 w-4" />
-                                     </a>
-                                   </div>
-                                 ))}
-                               </div>
-                             </div>
-                           )}
-                           
-                           {/* Generated Videos */}
-                           {selectedStep.result.video_urls && selectedStep.result.video_urls.length > 0 && (
-                             <div className="space-y-3">
-                               <h4 className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-                                 <Video className="h-3.5 w-3.5" />
-                                 Generated Videos ({selectedStep.result.video_urls.length})
-                               </h4>
-                               <div className="grid gap-4">
-                                 {selectedStep.result.video_urls.map((url, i) => (
-                                   <div key={i} className="rounded-lg overflow-hidden border">
-                                     <video 
-                                       src={url} 
-                                       controls 
-                                       className="w-full"
-                                     />
-                                   </div>
-                                 ))}
-                               </div>
-                             </div>
-                           )}
-                           
-                           {/* Research Data */}
-                           {selectedStep.result.research_data && (
-                             <div className="space-y-3">
-                               <h4 className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-                                 <Target className="h-3.5 w-3.5" />
-                                 Research Insights
-                               </h4>
-                               
-                               {/* Web Search Sources */}
-                               {selectedStep.result.research_data.grounding_sources?.length > 0 && (
-                                 <div className="p-3 rounded-lg bg-blue-50/50 border border-blue-100">
-                                   <p className="text-xs font-medium text-blue-700 mb-2">Web Sources ({selectedStep.result.research_data.grounding_sources.length})</p>
-                                   <div className="space-y-1.5">
-                                     {selectedStep.result.research_data.grounding_sources.slice(0, 5).map((source: any, i: number) => (
-                                       <a 
-                                         key={i} 
-                                         href={source.uri} 
-                                         target="_blank" 
-                                         rel="noopener noreferrer"
-                                         className="block text-xs text-blue-600 hover:underline truncate"
-                                       >
-                                         {source.title || source.uri}
-                                       </a>
-                                     ))}
-                                   </div>
-                                 </div>
-                               )}
-                               
-                               {/* Legacy SERP keywords support */}
-                               {selectedStep.result.research_data.serp_keywords?.length > 0 && (
-                                 <div className="p-3 rounded-lg bg-muted/30">
-                                   <p className="text-xs font-medium text-muted-foreground mb-2">Top Keywords</p>
-                                   <div className="flex flex-wrap gap-1.5">
-                                     {selectedStep.result.research_data.serp_keywords.slice(0, 10).map((kw: any, i: number) => (
-                                       <Badge key={i} variant="outline" className="text-xs">
-                                         {typeof kw === 'string' ? kw : kw.keyword}
-                                       </Badge>
-                                     ))}
-                                   </div>
-                                 </div>
-                               )}
-                             </div>
-                           )}
-                         </div>
-                       )}
-
-
-                       {/* Context Info Grid */}
-                       <div className="grid grid-cols-2 gap-4">
-                          <div className="p-4 rounded-lg bg-muted/30 border border-transparent hover:border-border transition-colors">
-                             <h4 className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1.5">
-                                <DollarSign className="h-3.5 w-3.5" /> Budget Allocation
-                             </h4>
-                             <p className="text-lg font-semibold">
-                                {campaign.total_budget 
-                                   ? `${campaign.currency} ${campaign.total_budget.toLocaleString()}` 
-                                   : "Not Set"}
-                             </p>
-                          </div>
-                           <div className="p-4 rounded-lg bg-muted/30 border border-transparent hover:border-border transition-colors">
-                             <h4 className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1.5">
-                                <Target className="h-3.5 w-3.5" /> Objective
-                             </h4>
-                             <p className="text-lg font-semibold capitalize">
-                                {campaign.objective_type?.replace('_', ' ') || "TBD"}
-                             </p>
-                          </div>
-                       </div>
-                   </div>
-                </ScrollArea>
-             </div>
-          ) : (
-             <div className="flex flex-col items-center justify-center h-full text-center p-8">
-                <div className="h-16 w-16 rounded-2xl bg-primary/5 flex items-center justify-center mb-6">
-                   <Target className="h-8 w-8 text-primary" />
-                </div>
-                <h3 className="text-lg font-semibold mb-2">Select a Step</h3>
-                <p className="text-sm text-muted-foreground max-w-sm mb-6">
-                   Review the campaign plan on the left and select a step to view details, take actions, or use AI tools.
-                </p>
-             </div>
-          )}
-        </main>
-
-        {/* Right Column - Chat Assistant */}
-        <aside className="col-span-3 flex flex-col min-h-0 glass-panel rounded-2xl overflow-hidden border-white/5 shadow-2xl shadow-black/20">
-           <div className="p-4 border-b bg-muted/20">
-              <h2 className="font-semibold text-sm flex items-center gap-2">
-                 <Bot className="h-4 w-4 text-purple-500" />
-                 AI Companion
-              </h2>
-           </div>
-           
-           <ScrollArea className="flex-1 p-4">
-              <div className="space-y-4">
-                 {chatMessages.length === 0 ? (
-                    <div className="text-center py-12 px-4">
-                       <div className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-purple-100 dark:bg-purple-900/20 mb-3">
-                          <Sparkles className="h-5 w-5 text-purple-600 dark:text-purple-400" />
-                       </div>
-                       <p className="text-sm font-medium mb-1">How can I help?</p>
-                       <p className="text-xs text-muted-foreground">
-                          Ask about audience targeting, ad copy, or budget strategy.
-                       </p>
-                    </div>
-                 ) : (
-                    chatMessages.map(msg => (
-                       <div 
-                          key={msg.id} 
-                          className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-                       >
-                        <div
-                          className={cn(
-                            "rounded-lg px-4 py-2 max-w-[85%] text-sm shadow-sm",
-                            msg.role === "user"
-                              ? "bg-primary text-primary-foreground ml-auto shadow-md shadow-primary/20"
-                              : "glass-card border-white/10 mr-auto text-foreground/90 backdrop-blur-md"
-                          )}
-                        >
-                          {msg.role === "user" ? (
-                            <p>{msg.content}</p>
-                          ) : (
-                            <div className="prose dark:prose-invert prose-sm max-w-none">
-                              <ReactMarkdown>{msg.content}</ReactMarkdown>
-                            </div>
-                          )}
-                          <span className="text-[10px] opacity-70 mt-1 block">
-                            {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                          </span>
-                        </div>
-                       </div>
-                    ))
-                 )}
-                 {sendingMessage && (
-                    <div className="flex justify-start">
-                       <div className="bg-muted px-4 py-2 rounded-2xl rounded-bl-none">
-                          <div className="flex gap-1">
-                             <span className="w-1.5 h-1.5 bg-foreground/30 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
-                             <span className="w-1.5 h-1.5 bg-foreground/30 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
-                             <span className="w-1.5 h-1.5 bg-foreground/30 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
-                          </div>
-                       </div>
-                    </div>
-                 )}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex gap-2">
+                <Textarea 
+                  placeholder="Add a description (90 chars max)..."
+                  value={newDescription}
+                  onChange={(e) => setNewDescription(e.target.value)}
+                  maxLength={90}
+                  className="min-h-[60px] text-sm resize-none"
+                />
+                <Button size="sm" variant="secondary" onClick={addDescription} className="h-[60px] px-3">
+                  <Plus className="h-4 w-4" />
+                </Button>
               </div>
-           </ScrollArea>
-
-           <div className="p-4 border-t bg-background">
-              {/* Context Prompt Chips */}
-              {chatMessages.length === 0 && (
-                 <div className="flex gap-2 mb-3 overflow-x-auto pb-1 scrollbar-hide">
-                    {["Target Audience", "Ad Headlines", "Budget"].map(suggestion => (
-                       <button 
-                          key={suggestion}
-                          onClick={() => setChatInput(`Help me with ${suggestion}`)}
-                          className="flex-shrink-0 text-[10px] font-medium px-2 py-1 rounded-full bg-muted hover:bg-muted/80 transition-colors border"
-                       >
-                          {suggestion}
-                       </button>
-                    ))}
-                 </div>
-              )}
+              <div className="text-right text-[10px] text-muted-foreground">{newDescription.length}/90</div>
               
-              <div className="relative">
-                 <Textarea
-                    placeholder="Message AI..."
-                    value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
-                    onKeyDown={(e) => {
-                       if (e.key === 'Enter' && !e.shiftKey) {
-                          e.preventDefault()
-                          sendChatMessage()
-                       }
-                    }}
-                    className="min-h-[44px] max-h-[120px] pr-10 py-3 rounded-xl resize-none shadow-sm focus-visible:ring-offset-0 focus-visible:ring-1"
-                    rows={1}
-                 />
-                 <Button 
-                    size="icon" 
-                    className="absolute right-1 top-1 h-8 w-8 rounded-lg" // smaller and inside
-                    onClick={sendChatMessage}
-                    disabled={!chatInput.trim() || sendingMessage}
-                 >
-                    <Send className="h-3.5 w-3.5" />
-                 </Button>
-              </div>
-           </div>
-        </aside>
+              {descriptions.length > 0 && (
+                <div className="space-y-2">
+                  {descriptions.map((d) => (
+                    <div key={d.id} className="flex items-start gap-2 p-2 rounded-md bg-muted/50 text-sm group">
+                      <span className="flex-1">{d.text}</span>
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                        onClick={() => removeDescription(d.id)}
+                      >
+                        <X className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
 
+        {/* Right Panel - AI Chat */}
+        <div className="col-span-3 flex flex-col min-h-0">
+          <Card className="flex-1 flex flex-col min-h-0">
+            <CardHeader className="pb-3 flex-shrink-0">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-primary" />
+                AI Assistant
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="flex-1 flex flex-col min-h-0 gap-3">
+              <ScrollArea className="flex-1">
+                <div className="space-y-3 pr-2">
+                  {chatMessages.length === 0 ? (
+                    <div className="text-center py-8">
+                      <MessageSquare className="h-10 w-10 text-muted-foreground/30 mx-auto mb-3" />
+                      <p className="text-sm text-muted-foreground">
+                        Ask for help with headlines, descriptions, or creative direction
+                      </p>
+                      <div className="mt-4 space-y-2">
+                        <Button 
+                          variant="outline" 
+                          size="sm" 
+                          className="w-full text-xs justify-start"
+                          onClick={() => setChatInput("Generate 5 compelling headlines for my campaign")}
+                        >
+                          <Wand2 className="h-3 w-3 mr-2" />
+                          Generate headlines
+                        </Button>
+                        <Button 
+                          variant="outline" 
+                          size="sm" 
+                          className="w-full text-xs justify-start"
+                          onClick={() => setChatInput("Suggest descriptions that highlight urgency")}
+                        >
+                          <Wand2 className="h-3 w-3 mr-2" />
+                          Suggest descriptions
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    chatMessages.map((msg) => (
+                      <div 
+                        key={msg.id}
+                        className={cn(
+                          "p-3 rounded-lg text-sm",
+                          msg.role === "user" 
+                            ? "bg-primary text-primary-foreground ml-4" 
+                            : "bg-muted mr-4"
+                        )}
+                      >
+                        {msg.content}
+                      </div>
+                    ))
+                  )}
+                  {sendingMessage && (
+                    <div className="flex items-center gap-2 p-3 bg-muted rounded-lg mr-4">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <span className="text-sm text-muted-foreground">Thinking...</span>
+                    </div>
+                  )}
+                </div>
+              </ScrollArea>
+              
+              <div className="flex gap-2 flex-shrink-0">
+                <Input 
+                  placeholder="Ask for help..."
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && sendChatMessage()}
+                  className="h-9"
+                />
+                <Button 
+                  size="icon" 
+                  onClick={sendChatMessage}
+                  disabled={sendingMessage || !chatInput.trim()}
+                  className="h-9 w-9"
+                >
+                  <Send className="h-4 w-4" />
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     </div>
   )

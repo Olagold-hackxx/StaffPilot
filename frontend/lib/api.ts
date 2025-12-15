@@ -718,6 +718,16 @@ class ApiClient {
     }>(`/campaigns/${campaignId}/steps/${stepId}/result`);
   }
 
+  async generateAdText(campaignId: string, assetType: 'short_headlines' | 'long_headlines' | 'descriptions', count: number = 5) {
+    return this.request<{
+      generated: string[];
+      asset_type: string;
+    }>(`/campaigns/${campaignId}/generate-text`, {
+      method: 'POST',
+      body: JSON.stringify({ asset_type: assetType, count }),
+    });
+  }
+
   // Analytics endpoints
   async generateAnalyticsReport(capabilityId: string, request: {
     report_type: string;

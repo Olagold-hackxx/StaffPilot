@@ -23,6 +23,7 @@ class IntegrationService:
         "tiktok",
         "google_ads",
         "google_analytics",
+        "youtube",
         "meta_ads"
     ]
     
@@ -45,6 +46,7 @@ class IntegrationService:
             "twitter": ("TWITTER_CLIENT_ID", "TWITTER_CLIENT_SECRET"),
             "google_ads": ("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"),
             "google_analytics": ("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"),
+            "youtube": ("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"),
             "meta_ads": ("META_ADS_APP_ID", "META_ADS_APP_SECRET"),
         }
         
@@ -79,13 +81,15 @@ class IntegrationService:
                     config.authorization_url = "https://www.tiktok.com/v2/auth/authorize/"
                     config.token_url = "https://open.tiktokapis.com/v2/oauth/token/"
                     config.api_base_url = "https://open.tiktokapis.com/v2"
-                elif platform in ["google_ads", "google_analytics"]:
+                elif platform in ["google_ads", "google_analytics", "youtube"]:
                     config.authorization_url = "https://accounts.google.com/o/oauth2/v2/auth"
                     config.token_url = "https://oauth2.googleapis.com/token"
                     if platform == "google_ads":
                         config.api_base_url = "https://googleads.googleapis.com/v16"
-                    else:  # google_analytics
+                    elif platform == "google_analytics":
                         config.api_base_url = "https://analyticsreporting.googleapis.com/v4"
+                    else:  # youtube
+                        config.api_base_url = "https://www.googleapis.com/youtube/v3"
                 elif platform == "meta_ads":
                     config.authorization_url = "https://www.facebook.com/v18.0/dialog/oauth"
                     config.token_url = "https://graph.facebook.com/v18.0/oauth/access_token"
@@ -214,6 +218,9 @@ class IntegrationService:
             existing.platform_name = profile_data.get("display_name") or profile_data.get("name") or profile_data.get("firstName") or ""
             existing.is_active = True
             existing.last_used_at = datetime.now(timezone.utc)
+            # Update assistant_id if provided (allows reassigning integrations)
+            if assistant_id:
+                existing.assistant_id = assistant_id
             
             await self.db.commit()
             await self.db.refresh(existing)

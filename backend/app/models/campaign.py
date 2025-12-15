@@ -49,8 +49,17 @@ class Campaign(Base):
     # NEW: Product/service brief
     product_brief = Column(Text, nullable=True)
     
-    # NEW: Creative preference (image, video, both)
-    creative_preference = Column(String(20), default="both")
+    # Performance Max fields
+    final_url = Column(String(500), nullable=True)  # Landing page URL
+    business_name = Column(String(255), nullable=True)
+    call_to_action = Column(String(50), default="learn_more")  # learn_more, shop_now, sign_up, etc.
+    
+    # Text assets (JSON arrays)
+    headlines = Column(JSON, nullable=True)  # [{text: "...", type: "short|long"}]
+    descriptions = Column(JSON, nullable=True)  # [{text: "..."}]
+    
+    # Ad strength score (computed based on asset quality)
+    ad_strength = Column(String(20), default="incomplete")  # incomplete, poor, average, good, excellent
     
     # NEW: Target audience (structured JSON)
     # {countries: [], age_range: [min, max], interests: [], gender: "all|male|female"}

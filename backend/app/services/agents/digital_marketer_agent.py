@@ -166,6 +166,74 @@ IMPORTANT: When creating content, generate ONE single, final post that is ready 
                 "success": False
             }
     
+    def execute_sync(
+        self,
+        request: str,
+        chat_history: Optional[List[Dict]] = None
+    ) -> Dict[str, Any]:
+        """
+        Execute an agent task synchronously (for Celery workers)
+        
+        Args:
+            request: User request/instruction
+            chat_history: Previous conversation history
+        
+        Returns:
+            Dictionary with result, steps, and metadata
+        """
+        try:
+            # Format chat history for LangChain
+            messages = []
+            if chat_history:
+                for msg in chat_history:
+                    if msg.get("role") == "user":
+                        messages.append(HumanMessage(content=msg.get("content", "")))
+                    elif msg.get("role") == "assistant":
+                        messages.append(HumanMessage(content=msg.get("content", "")))
+            
+            # Execute agent synchronously
+            result = self.agent_executor.invoke({
+                "input": request,
+                "chat_history": messages
+            })
+            
+            # Extract information
+            output = result.get("output", "")
+            intermediate_steps = result.get("intermediate_steps", [])
+            
+            # Parse tool calls
+            tools_used = []
+            steps_executed = []
+            
+            for step in intermediate_steps:
+                action = step[0]
+                observation = step[1]
+                
+                tool_name = action.tool if hasattr(action, 'tool') else "unknown"
+                tool_input = action.tool_input if hasattr(action, 'tool_input') else {}
+                
+                tools_used.append(tool_name)
+                steps_executed.append({
+                    "tool": tool_name,
+                    "input": tool_input,
+                    "output": str(observation)[:500]  # Truncate long outputs
+                })
+            
+            return {
+                "result": output,
+                "tools_used": tools_used,
+                "steps_executed": steps_executed,
+                "success": True
+            }
+            
+        except Exception as e:
+            logger.error(f"Agent execution failed: {str(e)}")
+            return {
+                "result": None,
+                "error": str(e),
+                "success": False
+            }
+    
     async def stream_execute(
         self,
         request: str,

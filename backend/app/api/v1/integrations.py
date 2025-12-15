@@ -448,14 +448,14 @@ async def init_oauth(
             "https://www.googleapis.com/auth/userinfo.email",
             "openid"
         ]
-        # Use the legacy callback URL that's registered in Google OAuth app
-        # This will redirect to the new endpoint via main.py
+        # Use unified Google callback URL for all Google services
         backend_url = settings.BACKEND_URL or 'http://localhost:8000'
+        google_redirect_uri = f"{backend_url}/api/v1/integrations/oauth/google/callback"
         auth_url = (
             f"https://accounts.google.com/o/oauth2/v2/auth?"
             f"response_type=code&"
             f"client_id={config.client_id}&"
-            f"redirect_uri={redirect_uri}&"
+            f"redirect_uri={google_redirect_uri}&"
             f"scope={' '.join(scopes)}&"
             f"state={state}&"
             f"access_type=offline&"
@@ -470,13 +470,38 @@ async def init_oauth(
             "email",
             "profile"
         ]
-        # For Google Analytics, use the new endpoint (or legacy if configured)
+        # Use unified Google callback URL for all Google services
         backend_url = settings.BACKEND_URL or 'http://localhost:8000'
+        google_redirect_uri = f"{backend_url}/api/v1/integrations/oauth/google/callback"
         auth_url = (
             f"https://accounts.google.com/o/oauth2/v2/auth?"
             f"response_type=code&"
             f"client_id={config.client_id}&"
-            f"redirect_uri={redirect_uri}&"
+            f"redirect_uri={google_redirect_uri}&"
+            f"scope={' '.join(scopes)}&"
+            f"state={state}&"
+            f"access_type=offline&"
+            f"prompt=consent"
+        )
+    
+    elif platform == "youtube":
+        scopes = [
+            "https://www.googleapis.com/auth/youtube",
+            "https://www.googleapis.com/auth/youtube.force-ssl",
+            "https://www.googleapis.com/auth/youtube.readonly",
+            "https://www.googleapis.com/auth/youtube.upload",
+            "email",
+            "profile",
+            "openid"
+        ]
+        # Use unified Google callback URL for all Google services
+        backend_url = settings.BACKEND_URL or 'http://localhost:8000'
+        google_redirect_uri = f"{backend_url}/api/v1/integrations/oauth/google/callback"
+        auth_url = (
+            f"https://accounts.google.com/o/oauth2/v2/auth?"
+            f"response_type=code&"
+            f"client_id={config.client_id}&"
+            f"redirect_uri={google_redirect_uri}&"
             f"scope={' '.join(scopes)}&"
             f"state={state}&"
             f"access_type=offline&"
@@ -514,6 +539,129 @@ async def init_oauth(
         return RedirectResponse(url=auth_url)
     else:
         return JSONResponse(content={"url": auth_url})
+
+
+
+@router.get("/oauth/google/callback")
+async def google_unified_callback(
+    code: Optional[str] = Query(None),
+    state: Optional[str] = Query(None),
+    error: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Unified OAuth callback for all Google services (Google Ads, Analytics, YouTube).
+    The actual platform is determined from the state data stored in Redis.
+    """
+    frontend_url = settings.FRONTEND_URL or "http://localhost:3000"
+    backend_url = settings.BACKEND_URL or "http://localhost:8000"
+    
+    logger.info(f"Google unified callback hit - code: {code[:20] if code else None}..., state: {state}")
+    
+    if error:
+        logger.error(f"Google OAuth error: {error}")
+        return RedirectResponse(
+            url=f"{frontend_url}/dashboard/integrations?success=false&error={error}"
+        )
+    
+    if not code or not state:
+        return RedirectResponse(
+            url=f"{frontend_url}/dashboard/integrations?success=false&error=Missing code or state"
+        )
+    
+    # Retrieve state from Redis to get the actual platform
+    redis_client = get_redis_client()
+    if not redis_client:
+        return RedirectResponse(
+            url=f"{frontend_url}/dashboard/integrations?success=false&error=Redis not configured"
+        )
+    
+    state_data_str = redis_client.get(f"oauth_state_{state}")
+    if not state_data_str:
+        return RedirectResponse(
+            url=f"{frontend_url}/dashboard/integrations?success=false&error=Invalid or expired state"
+        )
+    
+    state_data = json.loads(state_data_str)
+    platform = state_data.get("platform")  # This will be google_ads, google_analytics, or youtube
+    tenant_id = UUID(state_data["tenant_id"])
+    user_id = UUID(state_data["user_id"])
+    assistant_id = UUID(state_data["assistant_id"]) if state_data.get("assistant_id") else None
+    
+    if platform not in ["google_ads", "google_analytics", "youtube"]:
+        logger.error(f"Google callback received for non-Google platform: {platform}")
+        return RedirectResponse(
+            url=f"{frontend_url}/dashboard/integrations?success=false&error=Invalid platform for Google callback"
+        )
+    
+    logger.info(f"Google unified callback for platform: {platform}, tenant: {tenant_id}, assistant_id: {assistant_id}")
+    
+    # Get integration config
+    service = IntegrationService(db)
+    config = await service.get_integration_config(platform)
+    logger.info(f"Config for {platform}: {config}")
+    
+    if not config:
+        logger.error(f"No config found for platform: {platform}")
+        return RedirectResponse(
+            url=f"{frontend_url}/dashboard/integrations?success=false&error=Platform not configured"
+        )
+    
+    # Use the unified Google redirect URI
+    redirect_uri = f"{backend_url}/api/v1/integrations/oauth/google/callback"
+    
+    try:
+        # Exchange code for token (platform-specific)
+        token_result = await _exchange_token(
+            platform, code, config, redirect_uri, state_data
+        )
+        
+        # Unpack token result
+        if len(token_result) == 7:
+            access_token, refresh_token, token_expires_at, profile_data, pages, organizations, refresh_token_expires_at = token_result
+        else:
+            access_token, refresh_token, token_expires_at, profile_data, pages, organizations = token_result
+            refresh_token_expires_at = None
+        
+        # Create or update integration
+        integration = await service.create_or_update_integration(
+            tenant_id=tenant_id,
+            platform=platform,
+            platform_user_id=profile_data.get("id") or profile_data.get("channel_id") or str(uuid.uuid4()),
+            access_token=access_token,
+            profile_data=profile_data,
+            assistant_id=assistant_id,
+            connected_by=user_id,
+            refresh_token=refresh_token,
+            token_expires_at=token_expires_at,
+            refresh_token_expires_at=refresh_token_expires_at,
+            pages=pages,
+            organizations=organizations
+        )
+        
+        # Clean up state
+        redis_client.delete(f"oauth_state_{state}")
+        
+        logger.info(f"Successfully connected {platform} for tenant {tenant_id}")
+        
+        # For YouTube, redirect to workspace if connected from campaign (for now, just use integrations page)
+        if platform == "youtube":
+            return RedirectResponse(
+                url=f"{frontend_url}/dashboard/integrations?success=true&platform=youtube&linked=youtube&channel_id={profile_data.get('channel_id', '')}"
+            )
+        
+        return RedirectResponse(
+            url=f"{frontend_url}/dashboard/integrations?success=true&platform={platform}&integration_id={integration.id}"
+        )
+    
+    except Exception as e:
+        logger.error(f"Error in Google unified callback for {platform}: {str(e)}", exc_info=True)
+        error_message = str(e)
+        if len(error_message) > 200:
+            error_message = error_message[:200] + "..."
+        return RedirectResponse(
+            url=f"{frontend_url}/dashboard/integrations?success=false&error={error_message}"
+        )
 
 
 @router.get("/oauth/{platform}/callback")
@@ -614,6 +762,126 @@ async def oauth_callback(
         logger.error(f"Error in OAuth callback for {platform}: {str(e)}", exc_info=True)
         error_message = str(e)
         # Truncate long error messages for URL
+        if len(error_message) > 200:
+            error_message = error_message[:200] + "..."
+        return RedirectResponse(
+            url=f"{frontend_url}/dashboard/integrations?success=false&error={error_message}"
+        )
+
+
+@router.get("/oauth/google/callback")
+async def google_unified_callback(
+    code: Optional[str] = Query(None),
+    state: Optional[str] = Query(None),
+    error: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Unified OAuth callback for all Google services (Google Ads, Analytics, YouTube).
+    The actual platform is determined from the state data stored in Redis.
+    """
+    frontend_url = settings.FRONTEND_URL or "http://localhost:3000"
+    backend_url = settings.BACKEND_URL or "http://localhost:8000"
+    
+    if error:
+        logger.error(f"Google OAuth error: {error}")
+        return RedirectResponse(
+            url=f"{frontend_url}/dashboard/integrations?success=false&error={error}"
+        )
+    
+    if not code or not state:
+        return RedirectResponse(
+            url=f"{frontend_url}/dashboard/integrations?success=false&error=Missing code or state"
+        )
+    
+    # Retrieve state from Redis to get the actual platform
+    redis_client = get_redis_client()
+    if not redis_client:
+        return RedirectResponse(
+            url=f"{frontend_url}/dashboard/integrations?success=false&error=Redis not configured"
+        )
+    
+    state_data_str = redis_client.get(f"oauth_state_{state}")
+    if not state_data_str:
+        return RedirectResponse(
+            url=f"{frontend_url}/dashboard/integrations?success=false&error=Invalid or expired state"
+        )
+    
+    state_data = json.loads(state_data_str)
+    platform = state_data.get("platform")  # This will be google_ads, google_analytics, or youtube
+    tenant_id = UUID(state_data["tenant_id"])
+    user_id = UUID(state_data["user_id"])
+    assistant_id = UUID(state_data["assistant_id"]) if state_data.get("assistant_id") else None
+    
+    if platform not in ["google_ads", "google_analytics", "youtube"]:
+        logger.error(f"Google callback received for non-Google platform: {platform}")
+        return RedirectResponse(
+            url=f"{frontend_url}/dashboard/integrations?success=false&error=Invalid platform for Google callback"
+        )
+    
+    logger.info(f"Google unified callback for platform: {platform}, tenant: {tenant_id}")
+    
+    # Get integration config
+    service = IntegrationService(db)
+    config = await service.get_integration_config(platform)
+    logger.info(f"Config for {platform}: {config}")
+    
+    if not config:
+        logger.error(f"No config found for platform: {platform}")
+        return RedirectResponse(
+            url=f"{frontend_url}/dashboard/integrations?success=false&error=Platform not configured"
+        )
+    
+    # Use the unified Google redirect URI
+    redirect_uri = f"{backend_url}/api/v1/integrations/oauth/google/callback"
+    
+    try:
+        # Exchange code for token (platform-specific)
+        token_result = await _exchange_token(
+            platform, code, config, redirect_uri, state_data
+        )
+        
+        # Unpack token result
+        if len(token_result) == 7:
+            access_token, refresh_token, token_expires_at, profile_data, pages, organizations, refresh_token_expires_at = token_result
+        else:
+            access_token, refresh_token, token_expires_at, profile_data, pages, organizations = token_result
+            refresh_token_expires_at = None
+        
+        # Create or update integration
+        integration = await service.create_or_update_integration(
+            tenant_id=tenant_id,
+            platform=platform,
+            platform_user_id=profile_data.get("id") or profile_data.get("channel_id") or str(uuid.uuid4()),
+            access_token=access_token,
+            profile_data=profile_data,
+            assistant_id=assistant_id,
+            connected_by=user_id,
+            refresh_token=refresh_token,
+            token_expires_at=token_expires_at,
+            refresh_token_expires_at=refresh_token_expires_at,
+            pages=pages,
+            organizations=organizations
+        )
+        
+        # Clean up state
+        redis_client.delete(f"oauth_state_{state}")
+        
+        logger.info(f"Successfully connected {platform} for tenant {tenant_id}")
+        
+        # For YouTube, redirect to workspace if connected from campaign (for now, just use integrations page)
+        if platform == "youtube":
+            return RedirectResponse(
+                url=f"{frontend_url}/dashboard/integrations?success=true&platform=youtube&linked=youtube&channel_id={profile_data.get('channel_id', '')}"
+            )
+        
+        return RedirectResponse(
+            url=f"{frontend_url}/dashboard/integrations?success=true&platform={platform}&integration_id={integration.id}"
+        )
+    
+    except Exception as e:
+        logger.error(f"Error in Google unified callback for {platform}: {str(e)}", exc_info=True)
+        error_message = str(e)
         if len(error_message) > 200:
             error_message = error_message[:200] + "..."
         return RedirectResponse(
@@ -1218,6 +1486,84 @@ async def _exchange_token(
             profile_data["pages"] = pages
             
             return access_token, None, token_expires_at, profile_data, pages, active_ad_accounts, None
+        
+        elif platform == "youtube":
+            # YouTube OAuth token exchange (uses Google OAuth)
+            backend_url = settings.BACKEND_URL or 'http://localhost:8000'
+            google_redirect_uri = f"{backend_url}/api/v1/integrations/oauth/google/callback"
+            
+            logger.info(f"YouTube token exchange - redirect_uri: {google_redirect_uri}")
+            
+            token_response = await client.post(
+                "https://oauth2.googleapis.com/token",
+                data={
+                    "grant_type": "authorization_code",
+                    "code": code,
+                    "redirect_uri": google_redirect_uri,
+                    "client_id": config.client_id,
+                    "client_secret": config.client_secret,
+                },
+                headers={"Content-Type": "application/x-www-form-urlencoded"}
+            )
+            token_data = token_response.json()
+            
+            if "error" in token_data:
+                error_msg = token_data.get("error_description", token_data.get("error", "Token exchange failed"))
+                logger.error(f"YouTube token exchange error: {error_msg}")
+                raise Exception(f"Token exchange failed: {error_msg}")
+            
+            access_token = token_data.get("access_token")
+            refresh_token = token_data.get("refresh_token")
+            expires_in = token_data.get("expires_in", 0)
+            token_expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in) if expires_in else None
+            
+            if not access_token:
+                raise Exception("No access_token received from Google")
+            
+            logger.info(f"YouTube token exchange successful - refresh_token: {'present' if refresh_token else 'missing'}")
+            
+            # Get user profile
+            profile_response = await client.get(
+                "https://www.googleapis.com/oauth2/v2/userinfo",
+                headers={"Authorization": f"Bearer {access_token}"}
+            )
+            profile_data = profile_response.json()
+            profile_data["platform"] = "youtube"
+            
+            # Get YouTube channel info
+            organizations = []
+            try:
+                channel_response = await client.get(
+                    "https://www.googleapis.com/youtube/v3/channels",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    params={
+                        "part": "snippet,contentDetails,statistics",
+                        "mine": "true"
+                    }
+                )
+                channel_data = channel_response.json()
+                
+                if "items" in channel_data and len(channel_data["items"]) > 0:
+                    channel = channel_data["items"][0]
+                    channel_info = {
+                        "channel_id": channel.get("id"),
+                        "title": channel.get("snippet", {}).get("title"),
+                        "description": channel.get("snippet", {}).get("description"),
+                        "thumbnail": channel.get("snippet", {}).get("thumbnails", {}).get("default", {}).get("url"),
+                        "subscriber_count": channel.get("statistics", {}).get("subscriberCount"),
+                        "video_count": channel.get("statistics", {}).get("videoCount"),
+                        "view_count": channel.get("statistics", {}).get("viewCount"),
+                    }
+                    organizations.append(channel_info)
+                    profile_data["channel"] = channel_info
+                    profile_data["channel_id"] = channel.get("id")
+                    logger.info(f"YouTube: Found channel '{channel_info['title']}' (ID: {channel_info['channel_id']})")
+                else:
+                    logger.warning("YouTube: No channel found for this account")
+            except Exception as e:
+                logger.warning(f"Could not fetch YouTube channel info: {str(e)}")
+            
+            return access_token, refresh_token, token_expires_at, profile_data, [], organizations, None
         
         else:
             raise Exception(f"Unsupported platform: {platform}")

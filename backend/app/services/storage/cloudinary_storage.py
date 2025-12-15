@@ -225,6 +225,94 @@ class CloudinaryStorage(StorageBackend):
             logger.error(f"Cloudinary upload failed: {str(e)}")
             raise StorageError(f"Failed to upload: {str(e)}")
     
+    def upload_sync(
+        self, 
+        key: str, 
+        file: BinaryIO, 
+        content_type: str
+    ) -> str:
+        """
+        Upload file to Cloudinary synchronously - for Celery workers.
+        
+        Args:
+            key: Storage key/path for the file
+            file: Binary file data
+            content_type: MIME type of the file
+        
+        Returns:
+            Public URL of the uploaded file
+        """
+        try:
+            # Extract file data from BinaryIO
+            file.seek(0)
+            if hasattr(file, 'getvalue'):
+                file_data = file.getvalue()
+            else:
+                file_data = file.read()
+            
+            if not isinstance(file_data, bytes):
+                file_data = bytes(file_data)
+            
+            # Determine folder from key
+            folder = "documents"
+            if "tenants/" in key:
+                if key.startswith("tenants/"):
+                    parts = key.split("tenants/")[1].split("/")
+                elif "/tenants/" in key:
+                    parts = key.split("/tenants/")[1].split("/")
+                else:
+                    parts = []
+                if len(parts) > 0:
+                    folder = f"documents/tenants/{parts[0]}"
+            
+            # Determine resource type
+            is_video = content_type.startswith("video/")
+            is_raw = (
+                content_type.startswith("application/") or 
+                content_type.startswith("text/")
+            )
+            
+            resource_type = "image"
+            if is_video:
+                resource_type = "video"
+            elif is_raw:
+                resource_type = "raw"
+            
+            # Generate public_id
+            normalized_key = key.replace("/", "_")
+            if is_raw:
+                public_id = normalized_key
+            else:
+                if "." in normalized_key:
+                    public_id = normalized_key.rsplit(".", 1)[0]
+                else:
+                    public_id = normalized_key
+            
+            # Upload options
+            upload_options = {
+                "folder": folder,
+                "resource_type": resource_type,
+                "public_id": public_id,
+            }
+            
+            if not is_video and not is_raw:
+                upload_options["format"] = "jpg"
+                upload_options["quality"] = "auto:good"
+            
+            # Upload synchronously
+            media_buffer = BytesIO(file_data)
+            upload_result = cloudinary.uploader.upload(
+                media_buffer,
+                **upload_options
+            )
+            
+            logger.info(f"[SYNC] Uploaded {resource_type} to Cloudinary: {upload_result['secure_url']}")
+            return upload_result["secure_url"]
+            
+        except Exception as e:
+            logger.error(f"[SYNC] Cloudinary upload failed: {str(e)}")
+            raise StorageError(f"Failed to upload: {str(e)}")
+    
     async def download(self, key: str) -> bytes:
         """Download file from Cloudinary"""
         try:

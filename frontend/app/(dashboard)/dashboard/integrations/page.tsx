@@ -102,6 +102,15 @@ const integrationConfigs: Record<string, IntegrationConfig[]> = {
       required: false,
       platforms: ["google_analytics"],
     },
+    {
+      id: "youtube",
+      name: "YouTube",
+      description: "Connect YouTube for video content and advertising",
+      icon: Video,
+      category: "Video",
+      required: false,
+      platforms: ["youtube"],
+    },
   ],
   customer_support: [
     {
@@ -199,6 +208,7 @@ const platformIcons: Record<string, React.ComponentType<{ className?: string }>>
   tiktok: Music,
   google_ads: BarChart3,
   google_analytics: BarChart3,
+  youtube: Video,
   meta_ads: Facebook,
   gmail: Mail,
   outlook: Mail,
@@ -229,6 +239,7 @@ const platformColors: Record<string, string> = {
   tiktok: "text-black dark:text-white",
   google_ads: "text-[#4285F4]",
   google_analytics: "text-[#F4B400]",
+  youtube: "text-[#FF0000]",
   meta_ads: "text-[#1877F2]",
 }
 
@@ -241,6 +252,7 @@ const platformNames: Record<string, string> = {
   tiktok: "TikTok",
   google_ads: "Google Ads",
   google_analytics: "Google Analytics",
+  youtube: "YouTube",
   meta_ads: "Meta Ads",
   gmail: "Gmail",
   outlook: "Outlook",
@@ -286,12 +298,13 @@ export default function IntegrationsPage() {
   }, [capabilityId])
 
   useEffect(() => {
-    // Check for OAuth 1.0 callback
+    // Check for OAuth callback
     const success = searchParams.get('success')
     const oauth1 = searchParams.get('oauth1')
     const platform = searchParams.get('platform')
     const error = searchParams.get('error')
     
+    // Handle OAuth 1.0 Twitter callback
     if (success === 'true' && oauth1 === 'complete' && platform === 'twitter') {
       toast({
         title: "Success",
@@ -318,7 +331,23 @@ export default function IntegrationsPage() {
       }
       // Clear URL parameters
       window.history.replaceState({}, '', window.location.pathname)
-    } else if (success === 'false' || error) {
+    } 
+    // Handle general OAuth success (YouTube, Google Ads, etc.)
+    else if (success === 'true' && platform) {
+      const platformName = platformNames[platform] || platform
+      toast({
+        title: "Success",
+        description: `${platformName} connected successfully!`,
+      })
+      // Reload statuses to update integration
+      if (selectedAssistant) {
+        loadStatuses()
+      }
+      // Clear URL parameters
+      window.history.replaceState({}, '', window.location.pathname)
+    }
+    // Handle error
+    else if (success === 'false' || error) {
       const errorMsg = error || 'Authorization failed'
       toast({
         title: "Authorization Failed",

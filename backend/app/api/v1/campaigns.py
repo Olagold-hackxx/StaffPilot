@@ -49,7 +49,6 @@ class CampaignResponse(BaseModel):
     status: str
     plan: Optional[Dict[str, Any]]
     product_brief: Optional[str]
-    creative_preference: Optional[str]
     target_audience: Optional[Dict[str, Any]]
     metrics: Optional[Dict[str, Any]]
     created_at: str
@@ -96,7 +95,6 @@ async def list_campaigns(
                     status=c.status,
                     plan=c.plan,
                     product_brief=c.product_brief,
-                    creative_preference=c.creative_preference,
                     target_audience=c.target_audience,
                     metrics=c.metrics,
                     created_at=c.created_at.isoformat() if c.created_at else "",
@@ -151,7 +149,6 @@ async def get_campaign(
             status=campaign.status,
             plan=campaign.plan,
             product_brief=campaign.product_brief,
-            creative_preference=campaign.creative_preference,
             target_audience=campaign.target_audience,
             metrics=campaign.metrics,
             created_at=campaign.created_at.isoformat() if campaign.created_at else "",
@@ -603,7 +600,6 @@ async def create_campaign(
             currency=request.currency,
             goal_metrics=request.goal_metrics.model_dump() if request.goal_metrics else None,
             product_brief=request.product_brief,
-            creative_preference=request.creative_preference.value if request.creative_preference else "both",
             target_audience=request.target_audience.model_dump() if request.target_audience else None,
             status="draft"
         )
@@ -660,7 +656,6 @@ async def create_campaign(
             status=campaign.status,
             plan=campaign.plan,
             product_brief=campaign.product_brief,
-            creative_preference=campaign.creative_preference,
             target_audience=campaign.target_audience,
             metrics=campaign.metrics,
             created_at=campaign.created_at.isoformat() if campaign.created_at else "",
@@ -724,7 +719,7 @@ async def generate_plan(
             "end_date": str(campaign.end_date) if campaign.end_date else None,
             "channels": campaign.channels,
             "product_brief": campaign.product_brief,
-            "creative_preference": campaign.creative_preference or "both",
+            "creative_preference": (campaign.plan or {}).get("creative_preference", "both"),
             "target_audience": campaign.target_audience,
             "goal_metrics": campaign.goal_metrics
         }
@@ -1038,7 +1033,7 @@ async def execute_campaign_step(
             task_type = infer_step_task_type(
                 step_found.get("title", ""),
                 step_found.get("description", ""),
-                campaign.creative_preference or "both"
+                (campaign.plan or {}).get("creative_preference", "both")
             )
         
         # Update step status to in_progress
@@ -1060,7 +1055,7 @@ async def execute_campaign_step(
             "campaign_objective": campaign.objective_type,
             "product_brief": campaign.product_brief,
             "target_audience": campaign.target_audience,
-            "creative_preference": campaign.creative_preference
+            "creative_preference": (campaign.plan or {}).get("creative_preference", "both")
         }
         
         # Send to Celery
@@ -1164,3 +1159,205 @@ async def get_step_result(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get step result: {str(e)}"
         )
+
+
+# =====================
+# Ad Text Generation
+# =====================
+
+class GenerateTextRequest(BaseModel):
+    """Request to generate ad text assets"""
+    asset_type: str  # "short_headlines", "long_headlines", "descriptions"
+    count: int = 5   # Number to generate
+
+
+class GenerateTextResponse(BaseModel):
+    """Response with generated text assets"""
+    generated: List[str]
+    asset_type: str
+
+
+@router.post("/campaigns/{campaign_id}/generate-text", response_model=GenerateTextResponse)
+async def generate_ad_text(
+    campaign_id: UUID,
+    request: GenerateTextRequest,
+    current_tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Generate ad headlines or descriptions using AI.
+    
+    Asset types:
+    - short_headlines: Up to 15, max 30 characters each
+    - long_headlines: Up to 5, max 90 characters each
+    - descriptions: Up to 5, max 90 characters each
+    """
+    try:
+        # Get campaign
+        result = await db.execute(
+            select(Campaign).where(
+                Campaign.id == campaign_id,
+                Campaign.tenant_id == current_tenant.id
+            )
+        )
+        campaign = result.scalar_one_or_none()
+        
+        if not campaign:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Campaign not found"
+            )
+        
+        # Validate asset type and get limits
+        asset_configs = {
+            "short_headlines": {"max_chars": 30, "max_count": 15, "name": "short headline"},
+            "long_headlines": {"max_chars": 90, "max_count": 5, "name": "long headline"},
+            "descriptions": {"max_chars": 90, "max_count": 5, "name": "description"}
+        }
+        
+        if request.asset_type not in asset_configs:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid asset_type. Must be one of: {list(asset_configs.keys())}"
+            )
+        
+        config = asset_configs[request.asset_type]
+        count = min(request.count, config["max_count"])
+        
+        # Build context from campaign
+        campaign_name = campaign.name
+        product_brief = campaign.product_brief or campaign.description or ""
+        target_audience = campaign.target_audience or {}
+        
+        audience_text = ""
+        if target_audience:
+            if target_audience.get("countries"):
+                audience_text += f"Countries: {', '.join(target_audience['countries'])}. "
+            if target_audience.get("age_range"):
+                audience_text += f"Age: {target_audience['age_range'][0]}-{target_audience['age_range'][1]}. "
+            if target_audience.get("interests"):
+                audience_text += f"Interests: {', '.join(target_audience['interests'])}. "
+        
+        # Build prompt based on asset type
+        if request.asset_type == "short_headlines":
+            prompt = f"""Generate {count} short, punchy ad headlines for a Google Ads campaign.
+
+Campaign: {campaign_name}
+Product/Service: {product_brief}
+Target Audience: {audience_text if audience_text else "General audience"}
+
+Requirements:
+- Each headline MUST be {config['max_chars']} characters or LESS (this is critical)
+- Make them attention-grabbing and action-oriented
+- Include value propositions and calls to action
+- Vary the approach: benefits, urgency, questions, offers
+
+Return ONLY a JSON array of strings, nothing else. Example:
+["Headline 1", "Headline 2", "Headline 3"]"""
+
+        elif request.asset_type == "long_headlines":
+            prompt = f"""Generate {count} compelling long headlines for a Google Ads campaign.
+
+Campaign: {campaign_name}
+Product/Service: {product_brief}
+Target Audience: {audience_text if audience_text else "General audience"}
+
+Requirements:
+- Each headline MUST be {config['max_chars']} characters or LESS
+- Be more descriptive than short headlines
+- Include key benefits and differentiators
+- Create urgency or curiosity
+
+Return ONLY a JSON array of strings, nothing else. Example:
+["Long headline with more detail 1", "Long headline with more detail 2"]"""
+
+        else:  # descriptions
+            prompt = f"""Generate {count} compelling ad descriptions for a Google Ads campaign.
+
+Campaign: {campaign_name}
+Product/Service: {product_brief}
+Target Audience: {audience_text if audience_text else "General audience"}
+
+Requirements:
+- Each description MUST be {config['max_chars']} characters or LESS
+- Expand on the value proposition
+- Include benefits, features, or offers
+- End with a call to action when appropriate
+
+Return ONLY a JSON array of strings, nothing else. Example:
+["Description text 1", "Description text 2"]"""
+
+        # Generate using LLM
+        from app.services.llm.factory import create_llm_service
+        import json
+        
+        llm = create_llm_service()
+        
+        # Use sync method if available, otherwise use async
+        if hasattr(llm, 'generate_content_sync'):
+            response_text = llm.generate_content_sync(
+                prompt=prompt,
+                temperature=0.8
+            )
+        else:
+            response_text = await llm.generate_content(
+                prompt=prompt,
+                temperature=0.8
+            )
+        
+        # Parse JSON response
+        try:
+            # Clean response (remove markdown if present)
+            response_text = response_text.strip()
+            if response_text.startswith('```json'):
+                response_text = response_text[7:]
+            if response_text.startswith('```'):
+                response_text = response_text[3:]
+            if response_text.endswith('```'):
+                response_text = response_text[:-3]
+            
+            generated = json.loads(response_text.strip())
+            
+            if not isinstance(generated, list):
+                raise ValueError("Response is not a list")
+            
+            # Validate and truncate if needed
+            validated = []
+            for item in generated:
+                if isinstance(item, str):
+                    # Truncate to max chars if too long
+                    if len(item) > config["max_chars"]:
+                        item = item[:config["max_chars"] - 3] + "..."
+                    validated.append(item)
+            
+            generated = validated[:count]
+            
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning(f"Failed to parse JSON response, trying line-by-line: {e}")
+            # Fallback: split by newlines
+            lines = response_text.strip().split('\n')
+            generated = []
+            for line in lines:
+                line = line.strip().strip('-').strip('•').strip('"').strip("'").strip()
+                if line and len(line) <= config["max_chars"]:
+                    generated.append(line)
+                elif line:
+                    generated.append(line[:config["max_chars"] - 3] + "...")
+            generated = generated[:count]
+        
+        logger.info(f"Generated {len(generated)} {request.asset_type} for campaign {campaign_id}")
+        
+        return GenerateTextResponse(
+            generated=generated,
+            asset_type=request.asset_type
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating ad text: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate ad text: {str(e)}"
+        )
+

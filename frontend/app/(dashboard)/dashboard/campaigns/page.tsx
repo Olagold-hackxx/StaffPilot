@@ -76,8 +76,9 @@ export default function CampaignsPage() {
   const [selectedChannels, setSelectedChannels] = useState<string[]>([])
   const [statusFilter, setStatusFilter] = useState<string>("all")
   
-  // Creative preference
-  const [creativePreference, setCreativePreference] = useState<"image" | "video" | "both">("both")
+  // Performance Max fields
+  const [finalUrl, setFinalUrl] = useState("")
+  const [callToAction, setCallToAction] = useState<string>("learn_more")
 
   const loadCampaigns = useCallback(async () => {
     try {
@@ -203,9 +204,10 @@ export default function CampaignsPage() {
           start_date: startDate || undefined,
           end_date: endDate || undefined,
           channels: selectedChannels,
-          campaign_type: "brand_awareness",
-          // Creative preference - company context comes from uploaded documents
-          creative_preference: creativePreference
+          campaign_type: "performance_max",
+          // Performance Max fields
+          final_url: finalUrl.trim() || undefined,
+          call_to_action: callToAction
         }
       }) as { execution?: { id: string } }
 
@@ -363,7 +365,8 @@ export default function CampaignsPage() {
     setStartDate("")
     setEndDate("")
     setSelectedChannels([])
-    setCreativePreference("both")
+    setFinalUrl("")
+    setCallToAction("learn_more")
   }
 
   const channels = [
@@ -616,33 +619,59 @@ export default function CampaignsPage() {
                 rows={3}
               />
             </div>
+            <div>
+              <label htmlFor="final-url" className="text-sm font-medium mb-2 block">
+                Landing Page URL *
+              </label>
+              <Input
+                id="final-url"
+                type="url"
+                placeholder="https://yourwebsite.com/landing-page"
+                value={finalUrl}
+                onChange={(e) => setFinalUrl(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground mt-1">Where users will go when they click your ad</p>
+            </div>
+            <div>
+              <label htmlFor="call-to-action" className="text-sm font-medium mb-2 block">
+                Call to Action
+              </label>
+              <Select value={callToAction} onValueChange={setCallToAction}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="learn_more">Learn More</SelectItem>
+                  <SelectItem value="shop_now">Shop Now</SelectItem>
+                  <SelectItem value="sign_up">Sign Up</SelectItem>
+                  <SelectItem value="get_quote">Get Quote</SelectItem>
+                  <SelectItem value="contact_us">Contact Us</SelectItem>
+                  <SelectItem value="book_now">Book Now</SelectItem>
+                  <SelectItem value="download">Download</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label htmlFor="budget" className="text-sm font-medium mb-2 block">
-                  Total Budget ($)
+                  Daily Budget ($)
                 </label>
                 <Input
                   id="budget"
                   type="number"
-                  placeholder="5000"
+                  placeholder="50"
                   value={budget}
                   onChange={(e) => setBudget(e.target.value)}
                 />
               </div>
               <div>
-                <label htmlFor="creative-preference" className="text-sm font-medium mb-2 block">
-                  Creative Preference
+                <label className="text-sm font-medium mb-2 block">
+                  Campaign Type
                 </label>
-                <Select value={creativePreference} onValueChange={(value: "image" | "video" | "both") => setCreativePreference(value)}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="both">Both (Image & Video)</SelectItem>
-                    <SelectItem value="image">Image Only</SelectItem>
-                    <SelectItem value="video">Video Only</SelectItem>
-                  </SelectContent>
-                </Select>
+                <div className="h-10 px-3 py-2 rounded-md border bg-muted/50 text-sm flex items-center">
+                  <Target className="h-4 w-4 mr-2 text-primary" />
+                  Performance Max
+                </div>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
