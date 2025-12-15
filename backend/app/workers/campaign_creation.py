@@ -128,6 +128,9 @@ def execute_campaign_creation(
                     channels = request_data.get("channels", ["google_ads", "meta_ads"])
                     product_brief = request_data.get("product_brief", "")
                     creative_preference = request_data.get("creative_preference", "both")
+                    # Performance Max fields
+                    final_url = request_data.get("final_url", "") or website_url
+                    call_to_action = request_data.get("call_to_action", "learn_more")
                     
                     # Target audience
                     target_audience_data = request_data.get("target_audience", {})
@@ -440,7 +443,11 @@ IMPORTANT:
                         budget_allocation=budget_allocation,
                         status="draft",  # Draft status - waiting for user approval
                         plan=campaign_plan,
-                        metrics={}
+                        metrics={},
+                        # Performance Max fields
+                        final_url=final_url,
+                        business_name=tenant.name if tenant else None,
+                        call_to_action=call_to_action
                     )
                     
                     db.add(campaign)

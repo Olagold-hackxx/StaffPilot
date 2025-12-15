@@ -18,6 +18,7 @@ import {
   Youtube, ChevronRight, AlertCircle, Trash2, Download,
   Wand2, Send, MessageSquare
 } from "lucide-react"
+import ReactMarkdown from "react-markdown"
 
 // Types
 interface Headline {
@@ -939,10 +940,24 @@ export default function CampaignWorkspacePage() {
                           "p-3 rounded-lg text-sm",
                           msg.role === "user" 
                             ? "bg-primary text-primary-foreground ml-4" 
-                            : "bg-muted mr-4"
+                            : "bg-muted mr-4 prose prose-sm dark:prose-invert max-w-none"
                         )}
                       >
-                        {msg.content}
+                        {msg.role === "user" ? (
+                          msg.content
+                        ) : (
+                          <ReactMarkdown
+                            components={{
+                              strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+                              p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                              ul: ({ children }) => <ul className="list-disc list-inside mb-2 space-y-1">{children}</ul>,
+                              ol: ({ children }) => <ol className="list-decimal list-inside mb-2 space-y-1">{children}</ol>,
+                              li: ({ children }) => <li>{children}</li>,
+                            }}
+                          >
+                            {msg.content}
+                          </ReactMarkdown>
+                        )}
                       </div>
                     ))
                   )}

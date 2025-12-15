@@ -97,6 +97,13 @@ async def list_campaigns(
                     product_brief=c.product_brief,
                     target_audience=c.target_audience,
                     metrics=c.metrics,
+                    # Performance Max fields
+                    final_url=c.final_url,
+                    business_name=c.business_name or current_tenant.name,
+                    call_to_action=c.call_to_action,
+                    headlines=c.headlines,
+                    descriptions=c.descriptions,
+                    ad_strength=c.ad_strength,
                     created_at=c.created_at.isoformat() if c.created_at else "",
                     execution_id=str(c.execution_id) if c.execution_id else None
                 )
@@ -133,6 +140,11 @@ async def get_campaign(
                 detail="Campaign not found"
             )
         
+        # Get business name - fallback to tenant name if not set on campaign
+        business_name = campaign.business_name
+        if not business_name and current_tenant.name:
+            business_name = current_tenant.name
+        
         return CampaignResponse(
             id=str(campaign.id),
             name=campaign.name,
@@ -151,6 +163,13 @@ async def get_campaign(
             product_brief=campaign.product_brief,
             target_audience=campaign.target_audience,
             metrics=campaign.metrics,
+            # Performance Max fields
+            final_url=campaign.final_url,
+            business_name=business_name,
+            call_to_action=campaign.call_to_action,
+            headlines=campaign.headlines,
+            descriptions=campaign.descriptions,
+            ad_strength=campaign.ad_strength,
             created_at=campaign.created_at.isoformat() if campaign.created_at else "",
             execution_id=str(campaign.execution_id) if campaign.execution_id else None
         )

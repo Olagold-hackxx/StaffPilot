@@ -211,6 +211,13 @@ class CampaignResponse(BaseModel):
     creative_preference: Optional[str] = None
     target_audience: Optional[Dict[str, Any]] = None
     metrics: Optional[Dict[str, Any]] = None
+    # Performance Max fields
+    final_url: Optional[str] = None
+    business_name: Optional[str] = None
+    call_to_action: Optional[str] = None
+    headlines: Optional[List[Dict[str, Any]]] = None
+    descriptions: Optional[List[Dict[str, Any]]] = None
+    ad_strength: Optional[str] = None
     created_at: str
     execution_id: Optional[str] = None
 
