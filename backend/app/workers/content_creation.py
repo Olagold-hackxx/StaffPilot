@@ -1429,33 +1429,50 @@ def execute_content_creation(
                             entity_id = None
                             is_organization = False
                             
-                            # Get default organization or fall back to first organization
-                            # Extract directly from integration model (sync)
+                            # Get default organization from meta_data first (set by user in integrations page)
+                            # Then fall back to organizations array
                             selected_org = None
+                            default_page_id = integration_data.get("default_page_id") or (integration.meta_data or {}).get("default_page_id")
+                            
                             if integration.organizations:
-                                # Find default organization (one with is_default=True)
                                 if isinstance(integration.organizations, list):
-                                    for org in integration.organizations:
-                                        if isinstance(org, dict) and org.get("is_default"):
-                                            selected_org = org
-                                            break
-                                    # If no default, use first organization
+                                    # First try to find the user-selected default
+                                    if default_page_id:
+                                        logger.info(f"[{platform}] Looking for default_page_id: {default_page_id}")
+                                        for org in integration.organizations:
+                                            if isinstance(org, dict):
+                                                org_id = str(org.get("id") or org.get("entity_id") or org.get("organization_id") or "")
+                                                if org_id == str(default_page_id):
+                                                    selected_org = org
+                                                    logger.info(f"[{platform}] Found matching organization for default_page_id: {org.get('name', 'Unknown')}")
+                                                    break
+                                    
+                                    # If no default found by ID, check for is_default flag (legacy)
+                                    if not selected_org:
+                                        for org in integration.organizations:
+                                            if isinstance(org, dict) and org.get("is_default"):
+                                                selected_org = org
+                                                logger.info(f"[{platform}] Found organization with is_default flag: {org.get('name', 'Unknown')}")
+                                                break
+                                    
+                                    # If still no default, use first organization
                                     if not selected_org and integration.organizations:
                                         selected_org = integration.organizations[0]
+                                        logger.info(f"[{platform}] No default set, using first organization: {selected_org.get('name', 'Unknown')}")
                                 elif isinstance(integration.organizations, dict):
                                     # Single organization
                                     selected_org = integration.organizations
+                            
                             if not selected_org:
                                 # Fall back to first organization if no default is set
                                 selected_org = integration.organizations[0] if isinstance(integration.organizations, list) and integration.organizations else None
-                                logger.info(f"[{platform}] No default organization set, using first organization")
-                            else:
-                                logger.info(f"[{platform}] Using default organization: {selected_org.get('name', 'Unknown')}")
+                                if selected_org:
+                                    logger.info(f"[{platform}] Fallback to first organization: {selected_org.get('name', 'Unknown')}")
                             
                             if selected_org:
                                 entity_id = selected_org.get("id") or selected_org.get("entity_id") or selected_org.get("organization_id")
                                 is_organization = selected_org.get("is_organization", False)
-                                logger.info(f"[{platform}] Found entity_id from selected organization: {entity_id}, is_organization: {is_organization}")
+                                logger.info(f"[{platform}] Selected organization: name={selected_org.get('name', 'Unknown')}, entity_id={entity_id}, is_organization={is_organization}")
                             
                             # Try from meta_data if still not found
                             if not entity_id:

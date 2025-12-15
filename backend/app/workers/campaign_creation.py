@@ -1246,3 +1246,477 @@ Create a compelling video ad that:
         "executed_at": datetime.now(timezone.utc).isoformat(),
         "error": None if video_urls else "No video generated"
     }
+
+
+# =============================================================================
+# INDIVIDUAL CELERY TASKS FOR WORKSPACE GENERATE BUTTONS
+# =============================================================================
+
+@celery_app.task(name="campaign.generate_headlines", bind=True, max_retries=2)
+def generate_headlines_task(
+    self,
+    campaign_id: str,
+    tenant_id: str,
+    headline_type: str,  # "short" or "long"
+    count: int = 5
+) -> Dict[str, Any]:
+    """
+    Generate headlines for a campaign using AI.
+    
+    Args:
+        campaign_id: Campaign UUID string
+        tenant_id: Tenant UUID string
+        headline_type: "short" (max 30 chars) or "long" (max 90 chars)
+        count: Number of headlines to generate
+    
+    Returns:
+        Generated headlines list
+    """
+    try:
+        logger.info(f"=== HEADLINE GENERATION STARTED ===")
+        logger.info(f"Campaign: {campaign_id}, Type: {headline_type}, Count: {count}")
+        
+        from app.db.session import create_worker_session_factory
+        from app.models.campaign import Campaign
+        from app.services.llm.factory import create_llm_service
+        from sqlalchemy import select
+        from sqlalchemy.orm.attributes import flag_modified
+        import json
+        import copy
+        
+        SessionFactory = create_worker_session_factory()
+        db = SessionFactory()
+        
+        try:
+            # Get campaign
+            result = db.execute(
+                select(Campaign).where(Campaign.id == UUID(campaign_id))
+            )
+            campaign = result.scalar_one_or_none()
+            
+            if not campaign:
+                raise Exception(f"Campaign {campaign_id} not found")
+            
+            # Build context
+            campaign_name = campaign.name
+            product_brief = campaign.product_brief or campaign.description or ""
+            target_audience = campaign.target_audience or {}
+            
+            audience_text = ""
+            if target_audience:
+                if target_audience.get("countries"):
+                    audience_text += f"Countries: {', '.join(target_audience['countries'])}. "
+                if target_audience.get("interests"):
+                    audience_text += f"Interests: {', '.join(target_audience['interests'])}. "
+            
+            max_chars = 30 if headline_type == "short" else 90
+            
+            prompt = f"""Generate {count} {'short, punchy' if headline_type == 'short' else 'compelling long'} ad headlines for a Google Ads campaign.
+
+Campaign: {campaign_name}
+Product/Service: {product_brief}
+Target Audience: {audience_text if audience_text else "General audience"}
+
+Requirements:
+- Each headline MUST be {max_chars} characters or LESS (this is critical)
+- Make them attention-grabbing and action-oriented
+- Include value propositions and calls to action
+- Vary the approach: benefits, urgency, questions, offers
+
+Return ONLY a JSON array of strings, nothing else. Example:
+["Headline 1", "Headline 2", "Headline 3"]"""
+
+            # Generate with LLM
+            llm_service = create_llm_service()
+            response_text = llm_service.generate_content_sync(
+                prompt=prompt,
+                system_instruction="You are an expert Google Ads copywriter. Return ONLY valid JSON.",
+                temperature=0.8
+            )
+            
+            # Parse response
+            response_text = response_text.strip()
+            if response_text.startswith('```'):
+                response_text = response_text.split('```')[1]
+                if response_text.startswith('json'):
+                    response_text = response_text[4:]
+            if response_text.endswith('```'):
+                response_text = response_text[:-3]
+            
+            headlines = json.loads(response_text.strip())
+            
+            # Validate and truncate
+            validated = []
+            for h in headlines:
+                if isinstance(h, str):
+                    if len(h) > max_chars:
+                        h = h[:max_chars - 3] + "..."
+                    validated.append(h)
+            
+            headlines = validated[:count]
+            
+            # Update campaign headlines
+            existing_headlines = campaign.headlines or []
+            for h in headlines:
+                existing_headlines.append({
+                    "id": str(uuid.uuid4()),
+                    "text": h,
+                    "type": headline_type
+                })
+            
+            campaign.headlines = existing_headlines
+            flag_modified(campaign, "headlines")
+            db.commit()
+            
+            logger.info(f"=== HEADLINE GENERATION COMPLETED: {len(headlines)} headlines ===")
+            
+            return {
+                "success": True,
+                "campaign_id": campaign_id,
+                "headline_type": headline_type,
+                "generated": headlines,
+                "count": len(headlines)
+            }
+            
+        finally:
+            db.close()
+            
+    except Exception as e:
+        logger.error(f"Headline generation failed: {str(e)}", exc_info=True)
+        raise self.retry(exc=e, countdown=30)
+
+
+@celery_app.task(name="campaign.generate_descriptions", bind=True, max_retries=2)
+def generate_descriptions_task(
+    self,
+    campaign_id: str,
+    tenant_id: str,
+    count: int = 3
+) -> Dict[str, Any]:
+    """
+    Generate ad descriptions for a campaign using AI.
+    """
+    try:
+        logger.info(f"=== DESCRIPTION GENERATION STARTED ===")
+        logger.info(f"Campaign: {campaign_id}, Count: {count}")
+        
+        from app.db.session import create_worker_session_factory
+        from app.models.campaign import Campaign
+        from app.services.llm.factory import create_llm_service
+        from sqlalchemy import select
+        from sqlalchemy.orm.attributes import flag_modified
+        import json
+        import copy
+        
+        SessionFactory = create_worker_session_factory()
+        db = SessionFactory()
+        
+        try:
+            # Get campaign
+            result = db.execute(
+                select(Campaign).where(Campaign.id == UUID(campaign_id))
+            )
+            campaign = result.scalar_one_or_none()
+            
+            if not campaign:
+                raise Exception(f"Campaign {campaign_id} not found")
+            
+            # Build context
+            campaign_name = campaign.name
+            product_brief = campaign.product_brief or campaign.description or ""
+            
+            prompt = f"""Generate {count} compelling ad descriptions for a Google Ads campaign.
+
+Campaign: {campaign_name}
+Product/Service: {product_brief}
+
+Requirements:
+- Each description MUST be 90 characters or LESS
+- Focus on benefits and value propositions
+- Include clear calls to action
+- Be persuasive and engaging
+
+Return ONLY a JSON array of strings, nothing else. Example:
+["Description 1", "Description 2", "Description 3"]"""
+
+            # Generate with LLM
+            llm_service = create_llm_service()
+            response_text = llm_service.generate_content_sync(
+                prompt=prompt,
+                system_instruction="You are an expert Google Ads copywriter. Return ONLY valid JSON.",
+                temperature=0.8
+            )
+            
+            # Parse response
+            response_text = response_text.strip()
+            if response_text.startswith('```'):
+                response_text = response_text.split('```')[1]
+                if response_text.startswith('json'):
+                    response_text = response_text[4:]
+            if response_text.endswith('```'):
+                response_text = response_text[:-3]
+            
+            descriptions = json.loads(response_text.strip())
+            
+            # Validate and truncate
+            validated = []
+            for d in descriptions:
+                if isinstance(d, str):
+                    if len(d) > 90:
+                        d = d[:87] + "..."
+                    validated.append(d)
+            
+            descriptions = validated[:count]
+            
+            # Update campaign descriptions
+            existing_descriptions = campaign.descriptions or []
+            for d in descriptions:
+                existing_descriptions.append({
+                    "id": str(uuid.uuid4()),
+                    "text": d
+                })
+            
+            campaign.descriptions = existing_descriptions
+            flag_modified(campaign, "descriptions")
+            db.commit()
+            
+            logger.info(f"=== DESCRIPTION GENERATION COMPLETED: {len(descriptions)} descriptions ===")
+            
+            return {
+                "success": True,
+                "campaign_id": campaign_id,
+                "generated": descriptions,
+                "count": len(descriptions)
+            }
+            
+        finally:
+            db.close()
+            
+    except Exception as e:
+        logger.error(f"Description generation failed: {str(e)}", exc_info=True)
+        raise self.retry(exc=e, countdown=30)
+
+
+@celery_app.task(name="campaign.generate_images", bind=True, max_retries=1, time_limit=600)
+def generate_images_task(
+    self,
+    campaign_id: str,
+    tenant_id: str,
+    count: int = 3
+) -> Dict[str, Any]:
+    """
+    Generate images for a campaign using AI image generation.
+    """
+    try:
+        logger.info(f"=== IMAGE GENERATION STARTED ===")
+        logger.info(f"Campaign: {campaign_id}, Count: {count}")
+        
+        from app.db.session import create_worker_session_factory
+        from app.models.campaign import Campaign
+        from app.services.llm.factory import create_llm_service
+        from app.services.storage import get_storage
+        from sqlalchemy import select
+        from sqlalchemy.orm.attributes import flag_modified
+        from io import BytesIO
+        import uuid as uuid_lib
+        
+        SessionFactory = create_worker_session_factory()
+        db = SessionFactory()
+        
+        try:
+            # Get campaign
+            result = db.execute(
+                select(Campaign).where(Campaign.id == UUID(campaign_id))
+            )
+            campaign = result.scalar_one_or_none()
+            
+            if not campaign:
+                raise Exception(f"Campaign {campaign_id} not found")
+            
+            # Build image prompt
+            campaign_name = campaign.name
+            product_brief = campaign.product_brief or campaign.description or ""
+            
+            image_prompt = f"""Create a professional advertising image for:
+Campaign: {campaign_name}
+Product/Service: {product_brief}
+
+Style: Modern, clean, professional advertising photography.
+Use: Google Ads and social media marketing.
+Make it visually striking and suitable for digital advertising."""
+
+            # Generate images
+            llm_service = create_llm_service()
+            image_urls = []
+            
+            for i in range(count):
+                try:
+                    logger.info(f"Generating image {i+1}/{count}...")
+                    image_data = llm_service.generate_image_sync(
+                        prompt=image_prompt,
+                        aspect_ratio="1:1"
+                    )
+                    
+                    if image_data:
+                        storage = get_storage()
+                        image_bytes = BytesIO()
+                        if isinstance(image_data, bytes):
+                            image_bytes.write(image_data)
+                        else:
+                            image_bytes.write(bytes(image_data))
+                        
+                        image_bytes.seek(0)
+                        storage_key = f"tenants/{tenant_id}/campaigns/{campaign_id}/images/{uuid_lib.uuid4()}.png"
+                        
+                        url = storage.upload_sync(
+                            key=storage_key,
+                            file=image_bytes,
+                            content_type="image/png"
+                        )
+                        image_urls.append(url)
+                        logger.info(f"Uploaded image to: {url}")
+                except Exception as e:
+                    logger.error(f"Image {i+1} generation failed: {e}")
+            
+            # Update campaign images
+            existing_images = campaign.images or []
+            for url in image_urls:
+                existing_images.append({
+                    "id": str(uuid_lib.uuid4()),
+                    "url": url,
+                    "type": "image",
+                    "platform": "google_ads"
+                })
+            
+            campaign.images = existing_images
+            flag_modified(campaign, "images")
+            db.commit()
+            
+            logger.info(f"=== IMAGE GENERATION COMPLETED: {len(image_urls)} images ===")
+            
+            return {
+                "success": True,
+                "campaign_id": campaign_id,
+                "image_urls": image_urls,
+                "count": len(image_urls)
+            }
+            
+        finally:
+            db.close()
+            
+    except Exception as e:
+        logger.error(f"Image generation failed: {str(e)}", exc_info=True)
+        raise self.retry(exc=e, countdown=60)
+
+
+@celery_app.task(name="campaign.generate_videos", bind=True, max_retries=1, time_limit=900)
+def generate_videos_task(
+    self,
+    campaign_id: str,
+    tenant_id: str,
+    duration: int = 15
+) -> Dict[str, Any]:
+    """
+    Generate video for a campaign using AI video generation.
+    """
+    try:
+        logger.info(f"=== VIDEO GENERATION STARTED ===")
+        logger.info(f"Campaign: {campaign_id}, Duration: {duration}s")
+        
+        from app.db.session import create_worker_session_factory
+        from app.models.campaign import Campaign
+        from app.services.llm.factory import create_llm_service
+        from app.services.storage import get_storage
+        from sqlalchemy import select
+        from sqlalchemy.orm.attributes import flag_modified
+        from io import BytesIO
+        import uuid as uuid_lib
+        
+        SessionFactory = create_worker_session_factory()
+        db = SessionFactory()
+        
+        try:
+            # Get campaign
+            result = db.execute(
+                select(Campaign).where(Campaign.id == UUID(campaign_id))
+            )
+            campaign = result.scalar_one_or_none()
+            
+            if not campaign:
+                raise Exception(f"Campaign {campaign_id} not found")
+            
+            # Build video prompt
+            campaign_name = campaign.name
+            product_brief = campaign.product_brief or campaign.description or ""
+            
+            video_prompt = f"""Create a professional advertising video for:
+Campaign: {campaign_name}
+Product/Service: {product_brief}
+
+Style: Modern, dynamic, professional video suitable for YouTube ads and social media.
+Duration: {duration} seconds.
+Make it engaging and attention-grabbing from the first second."""
+
+            # Generate video
+            llm_service = create_llm_service()
+            video_urls = []
+            
+            try:
+                logger.info(f"Generating {duration}s video - this may take 2-10 minutes...")
+                video_data = llm_service.generate_video_sync(
+                    prompt=video_prompt,
+                    duration_seconds=duration,
+                    aspect_ratio="16:9"
+                )
+                
+                if video_data:
+                    storage = get_storage()
+                    video_bytes = BytesIO()
+                    if isinstance(video_data, bytes):
+                        video_bytes.write(video_data)
+                    else:
+                        video_bytes.write(bytes(video_data))
+                    
+                    video_bytes.seek(0)
+                    storage_key = f"tenants/{tenant_id}/campaigns/{campaign_id}/videos/{uuid_lib.uuid4()}.mp4"
+                    
+                    url = storage.upload_sync(
+                        key=storage_key,
+                        file=video_bytes,
+                        content_type="video/mp4"
+                    )
+                    video_urls.append(url)
+                    logger.info(f"Uploaded video to: {url}")
+            except Exception as e:
+                logger.error(f"Video generation failed: {e}")
+            
+            # Update campaign videos
+            existing_videos = campaign.videos or []
+            for url in video_urls:
+                existing_videos.append({
+                    "id": str(uuid_lib.uuid4()),
+                    "url": url,
+                    "type": "video",
+                    "platform": "youtube"
+                })
+            
+            campaign.videos = existing_videos
+            flag_modified(campaign, "videos")
+            db.commit()
+            
+            logger.info(f"=== VIDEO GENERATION COMPLETED: {len(video_urls)} videos ===")
+            
+            return {
+                "success": True,
+                "campaign_id": campaign_id,
+                "video_urls": video_urls,
+                "count": len(video_urls)
+            }
+            
+        finally:
+            db.close()
+            
+    except Exception as e:
+        logger.error(f"Video generation failed: {str(e)}", exc_info=True)
+        raise self.retry(exc=e, countdown=120)
+

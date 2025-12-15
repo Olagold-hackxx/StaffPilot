@@ -261,33 +261,80 @@ export default function CampaignWorkspacePage() {
     setDescriptions(prev => prev.filter(d => d.id !== id))
   }
 
-  // Generate headlines/descriptions with AI
+  // Generate headlines/descriptions with AI (Celery-based)
+  const pollForCompletion = async (taskId: string, onComplete: (result: any) => void, assetType: string) => {
+    const maxAttempts = 60 // 5 minutes with 5s intervals
+    let attempts = 0
+    
+    const poll = async () => {
+      try {
+        const status = await apiClient.getGenerationStatus(campaign!.id, taskId)
+        
+        if (status.status === "completed") {
+          onComplete(status.result)
+          loadCampaign() // Refresh campaign data
+          return
+        } else if (status.status === "failed") {
+          toast({
+            title: "Generation Failed",
+            description: status.error || "An error occurred during generation",
+            variant: "destructive",
+          })
+          return
+        }
+        
+        attempts++
+        if (attempts < maxAttempts) {
+          setTimeout(poll, 5000) // Poll every 5 seconds
+        } else {
+          toast({
+            title: "Timeout",
+            description: `${assetType} generation is taking longer than expected. Check back later.`,
+            variant: "destructive",
+          })
+        }
+      } catch (error) {
+        console.error("Polling error:", error)
+      }
+    }
+    
+    poll()
+  }
+  
   const generateShortHeadlines = async () => {
     if (!campaign) return
     
     setGeneratingShortHeadlines(true)
     try {
-      const response = await apiClient.generateAdText(campaign.id, 'short_headlines', 5)
-      
-      const newHeadlines: Headline[] = response.generated.map((text, i) => ({
-        id: `gen-short-${Date.now()}-${i}`,
-        text,
-        type: 'short' as const
-      }))
-      
-      setHeadlines(prev => [...prev, ...newHeadlines])
+      const response = await apiClient.generateHeadlinesAsync(campaign.id, 'short', 5)
       
       toast({
-        title: "Headlines Generated",
-        description: `Added ${newHeadlines.length} short headlines`,
+        title: "Generating Headlines",
+        description: response.message,
       })
+      
+      pollForCompletion(response.task_id, (result) => {
+        if (result?.generated) {
+          const newHeadlines: Headline[] = result.generated.map((text: string, i: number) => ({
+            id: `gen-short-${Date.now()}-${i}`,
+            text,
+            type: 'short' as const
+          }))
+          setHeadlines(prev => [...prev, ...newHeadlines])
+          toast({
+            title: "Headlines Generated",
+            description: `Added ${newHeadlines.length} short headlines`,
+          })
+        }
+        setGeneratingShortHeadlines(false)
+      }, "Headlines")
+      
     } catch (error: any) {
       toast({
         title: "Error",
         description: error.message || "Failed to generate headlines",
         variant: "destructive",
       })
-    } finally {
       setGeneratingShortHeadlines(false)
     }
   }
@@ -297,27 +344,35 @@ export default function CampaignWorkspacePage() {
     
     setGeneratingLongHeadlines(true)
     try {
-      const response = await apiClient.generateAdText(campaign.id, 'long_headlines', 3)
-      
-      const newHeadlines: Headline[] = response.generated.map((text, i) => ({
-        id: `gen-long-${Date.now()}-${i}`,
-        text,
-        type: 'long' as const
-      }))
-      
-      setHeadlines(prev => [...prev, ...newHeadlines])
+      const response = await apiClient.generateHeadlinesAsync(campaign.id, 'long', 3)
       
       toast({
-        title: "Headlines Generated",
-        description: `Added ${newHeadlines.length} long headlines`,
+        title: "Generating Long Headlines",
+        description: response.message,
       })
+      
+      pollForCompletion(response.task_id, (result) => {
+        if (result?.generated) {
+          const newHeadlines: Headline[] = result.generated.map((text: string, i: number) => ({
+            id: `gen-long-${Date.now()}-${i}`,
+            text,
+            type: 'long' as const
+          }))
+          setHeadlines(prev => [...prev, ...newHeadlines])
+          toast({
+            title: "Long Headlines Generated",
+            description: `Added ${newHeadlines.length} long headlines`,
+          })
+        }
+        setGeneratingLongHeadlines(false)
+      }, "Long Headlines")
+      
     } catch (error: any) {
       toast({
         title: "Error",
-        description: error.message || "Failed to generate headlines",
+        description: error.message || "Failed to generate long headlines",
         variant: "destructive",
       })
-    } finally {
       setGeneratingLongHeadlines(false)
     }
   }
@@ -327,26 +382,34 @@ export default function CampaignWorkspacePage() {
     
     setGeneratingDescriptions(true)
     try {
-      const response = await apiClient.generateAdText(campaign.id, 'descriptions', 3)
-      
-      const newDescriptions: Description[] = response.generated.map((text, i) => ({
-        id: `gen-desc-${Date.now()}-${i}`,
-        text
-      }))
-      
-      setDescriptions(prev => [...prev, ...newDescriptions])
+      const response = await apiClient.generateDescriptionsAsync(campaign.id, 3)
       
       toast({
-        title: "Descriptions Generated",
-        description: `Added ${newDescriptions.length} descriptions`,
+        title: "Generating Descriptions",
+        description: response.message,
       })
+      
+      pollForCompletion(response.task_id, (result) => {
+        if (result?.generated) {
+          const newDescriptions: Description[] = result.generated.map((text: string, i: number) => ({
+            id: `gen-desc-${Date.now()}-${i}`,
+            text
+          }))
+          setDescriptions(prev => [...prev, ...newDescriptions])
+          toast({
+            title: "Descriptions Generated",
+            description: `Added ${newDescriptions.length} descriptions`,
+          })
+        }
+        setGeneratingDescriptions(false)
+      }, "Descriptions")
+      
     } catch (error: any) {
       toast({
         title: "Error",
         description: error.message || "Failed to generate descriptions",
         variant: "destructive",
       })
-    } finally {
       setGeneratingDescriptions(false)
     }
   }
@@ -375,41 +438,83 @@ export default function CampaignWorkspacePage() {
     }
   }
 
-  // Generate images with AI
+  // Generate images with AI (Celery-based)
   const generateImages = async () => {
     if (!campaign) return
     
     setGeneratingImages(true)
     try {
+      const response = await apiClient.generateImagesAsync(campaign.id, 3)
+      
       toast({
         title: "Generating Images",
-        description: "AI is creating images for your campaign...",
+        description: response.message,
       })
       
-      // TODO: Call actual image generation API
-      await new Promise(resolve => setTimeout(resolve, 3000))
+      pollForCompletion(response.task_id, (result) => {
+        if (result?.image_urls) {
+          const newImages: CampaignAsset[] = result.image_urls.map((url: string, i: number) => ({
+            id: `gen-img-${Date.now()}-${i}`,
+            asset_type: "image",
+            url,
+            status: "completed"
+          }))
+          setImages(prev => [...prev, ...newImages])
+          toast({
+            title: "Images Generated",
+            description: `Created ${newImages.length} new images`,
+          })
+        }
+        setGeneratingImages(false)
+      }, "Images")
       
-      // Mock response
-      const newImages: CampaignAsset[] = [
-        { id: Date.now().toString(), asset_type: "image", url: "https://via.placeholder.com/400x300/3b82f6/ffffff?text=Generated+1", status: "completed" },
-        { id: (Date.now() + 1).toString(), asset_type: "image", url: "https://via.placeholder.com/400x300/8b5cf6/ffffff?text=Generated+2", status: "completed" },
-        { id: (Date.now() + 2).toString(), asset_type: "image", url: "https://via.placeholder.com/400x300/ec4899/ffffff?text=Generated+3", status: "completed" },
-      ]
-      
-      setImages(prev => [...prev, ...newImages])
-      
-      toast({
-        title: "Images Generated",
-        description: `Created ${newImages.length} new images`,
-      })
     } catch (error: any) {
       toast({
         title: "Error",
         description: error.message || "Failed to generate images",
         variant: "destructive",
       })
-    } finally {
       setGeneratingImages(false)
+    }
+  }
+
+  // Generate videos with AI (Celery-based)
+  const generateVideos = async () => {
+    if (!campaign) return
+    
+    setGeneratingVideo(true)
+    try {
+      const response = await apiClient.generateVideosAsync(campaign.id, 15)
+      
+      toast({
+        title: "Generating Video",
+        description: response.message,
+      })
+      
+      pollForCompletion(response.task_id, (result) => {
+        if (result?.video_urls) {
+          const newVideos: CampaignAsset[] = result.video_urls.map((url: string, i: number) => ({
+            id: `gen-vid-${Date.now()}-${i}`,
+            asset_type: "video",
+            url,
+            status: "completed"
+          }))
+          setVideos(prev => [...prev, ...newVideos])
+          toast({
+            title: "Video Generated",
+            description: `Created ${newVideos.length} new video(s)`,
+          })
+        }
+        setGeneratingVideo(false)
+      }, "Video")
+      
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to generate video",
+        variant: "destructive",
+      })
+      setGeneratingVideo(false)
     }
   }
 
@@ -799,9 +904,13 @@ export default function CampaignWorkspacePage() {
                       YouTube Connected
                     </span>
                   )}
-                  <Button size="sm" variant="default" className="h-7 text-xs" disabled={generatingVideo}>
-                    <Wand2 className="h-3 w-3 mr-1" />
-                    Generate
+                  <Button size="sm" variant="default" className="h-7 text-xs" disabled={generatingVideo} onClick={generateVideos}>
+                    {generatingVideo ? (
+                      <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                    ) : (
+                      <Wand2 className="h-3 w-3 mr-1" />
+                    )}
+                    {generatingVideo ? "Generating..." : "Generate"}
                   </Button>
                 </div>
               </CardTitle>

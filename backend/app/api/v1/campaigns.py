@@ -1380,3 +1380,289 @@ Return ONLY a JSON array of strings, nothing else. Example:
             detail=f"Failed to generate ad text: {str(e)}"
         )
 
+
+# =====================
+# Celery-Based Asset Generation
+# =====================
+
+class GenerateAssetRequest(BaseModel):
+    """Request to generate assets via Celery"""
+    count: int = 5
+    headline_type: Optional[str] = None  # For headlines: "short" or "long"
+    duration: Optional[int] = 15  # For videos: duration in seconds
+
+
+class GenerateAssetResponse(BaseModel):
+    """Response with task ID for async generation"""
+    task_id: str
+    campaign_id: str
+    asset_type: str
+    status: str = "queued"
+    message: str
+
+
+@router.post("/campaigns/{campaign_id}/generate/headlines", response_model=GenerateAssetResponse)
+async def generate_headlines_async(
+    campaign_id: UUID,
+    request: GenerateAssetRequest,
+    current_tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Generate headlines for a campaign using Celery background task.
+    Returns immediately with task_id for polling.
+    """
+    try:
+        # Verify campaign exists
+        result = await db.execute(
+            select(Campaign).where(
+                Campaign.id == campaign_id,
+                Campaign.tenant_id == current_tenant.id
+            )
+        )
+        campaign = result.scalar_one_or_none()
+        
+        if not campaign:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Campaign not found"
+            )
+        
+        # Import and trigger Celery task
+        from app.workers.campaign_creation import generate_headlines_task
+        
+        headline_type = request.headline_type or "short"
+        
+        celery_result = generate_headlines_task.delay(
+            campaign_id=str(campaign_id),
+            tenant_id=str(current_tenant.id),
+            headline_type=headline_type,
+            count=min(request.count, 15 if headline_type == "short" else 5)
+        )
+        
+        logger.info(f"Started headline generation task {celery_result.id} for campaign {campaign_id}")
+        
+        return GenerateAssetResponse(
+            task_id=celery_result.id,
+            campaign_id=str(campaign_id),
+            asset_type=f"{headline_type}_headlines",
+            status="queued",
+            message=f"Generating {request.count} {headline_type} headlines in background"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error starting headline generation: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to start headline generation: {str(e)}"
+        )
+
+
+@router.post("/campaigns/{campaign_id}/generate/descriptions", response_model=GenerateAssetResponse)
+async def generate_descriptions_async(
+    campaign_id: UUID,
+    request: GenerateAssetRequest,
+    current_tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Generate descriptions for a campaign using Celery background task.
+    """
+    try:
+        # Verify campaign exists
+        result = await db.execute(
+            select(Campaign).where(
+                Campaign.id == campaign_id,
+                Campaign.tenant_id == current_tenant.id
+            )
+        )
+        campaign = result.scalar_one_or_none()
+        
+        if not campaign:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Campaign not found"
+            )
+        
+        from app.workers.campaign_creation import generate_descriptions_task
+        
+        celery_result = generate_descriptions_task.delay(
+            campaign_id=str(campaign_id),
+            tenant_id=str(current_tenant.id),
+            count=min(request.count, 5)
+        )
+        
+        logger.info(f"Started description generation task {celery_result.id} for campaign {campaign_id}")
+        
+        return GenerateAssetResponse(
+            task_id=celery_result.id,
+            campaign_id=str(campaign_id),
+            asset_type="descriptions",
+            status="queued",
+            message=f"Generating {request.count} descriptions in background"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error starting description generation: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to start description generation: {str(e)}"
+        )
+
+
+@router.post("/campaigns/{campaign_id}/generate/images", response_model=GenerateAssetResponse)
+async def generate_images_async(
+    campaign_id: UUID,
+    request: GenerateAssetRequest,
+    current_tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Generate images for a campaign using Celery background task.
+    """
+    try:
+        # Verify campaign exists
+        result = await db.execute(
+            select(Campaign).where(
+                Campaign.id == campaign_id,
+                Campaign.tenant_id == current_tenant.id
+            )
+        )
+        campaign = result.scalar_one_or_none()
+        
+        if not campaign:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Campaign not found"
+            )
+        
+        from app.workers.campaign_creation import generate_images_task
+        
+        celery_result = generate_images_task.delay(
+            campaign_id=str(campaign_id),
+            tenant_id=str(current_tenant.id),
+            count=min(request.count, 5)
+        )
+        
+        logger.info(f"Started image generation task {celery_result.id} for campaign {campaign_id}")
+        
+        return GenerateAssetResponse(
+            task_id=celery_result.id,
+            campaign_id=str(campaign_id),
+            asset_type="images",
+            status="queued",
+            message=f"Generating {request.count} images in background (this may take a few minutes)"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error starting image generation: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to start image generation: {str(e)}"
+        )
+
+
+@router.post("/campaigns/{campaign_id}/generate/videos", response_model=GenerateAssetResponse)
+async def generate_videos_async(
+    campaign_id: UUID,
+    request: GenerateAssetRequest,
+    current_tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Generate video for a campaign using Celery background task.
+    """
+    try:
+        # Verify campaign exists
+        result = await db.execute(
+            select(Campaign).where(
+                Campaign.id == campaign_id,
+                Campaign.tenant_id == current_tenant.id
+            )
+        )
+        campaign = result.scalar_one_or_none()
+        
+        if not campaign:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Campaign not found"
+            )
+        
+        from app.workers.campaign_creation import generate_videos_task
+        
+        duration = request.duration or 15
+        
+        celery_result = generate_videos_task.delay(
+            campaign_id=str(campaign_id),
+            tenant_id=str(current_tenant.id),
+            duration=duration
+        )
+        
+        logger.info(f"Started video generation task {celery_result.id} for campaign {campaign_id}")
+        
+        return GenerateAssetResponse(
+            task_id=celery_result.id,
+            campaign_id=str(campaign_id),
+            asset_type="videos",
+            status="queued",
+            message=f"Generating {duration}s video in background (this may take 5-10 minutes)"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error starting video generation: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to start video generation: {str(e)}"
+        )
+
+
+@router.get("/campaigns/{campaign_id}/generate/status/{task_id}")
+async def get_generation_status(
+    campaign_id: UUID,
+    task_id: str,
+    current_tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Check the status of a generation task.
+    """
+    try:
+        from celery.result import AsyncResult
+        from app.workers import celery_app
+        
+        result = AsyncResult(task_id, app=celery_app)
+        
+        if result.ready():
+            if result.successful():
+                return {
+                    "task_id": task_id,
+                    "status": "completed",
+                    "result": result.result
+                }
+            else:
+                return {
+                    "task_id": task_id,
+                    "status": "failed",
+                    "error": str(result.result) if result.result else "Unknown error"
+                }
+        else:
+            return {
+                "task_id": task_id,
+                "status": result.state.lower(),
+                "message": "Task is still processing"
+            }
+            
+    except Exception as e:
+        logger.error(f"Error checking generation status: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to check generation status: {str(e)}"
+        )

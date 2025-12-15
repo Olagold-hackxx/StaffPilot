@@ -728,6 +728,70 @@ class ApiClient {
     });
   }
 
+  // Celery-based async generation methods
+  async generateHeadlinesAsync(campaignId: string, headlineType: 'short' | 'long' = 'short', count: number = 5) {
+    return this.request<{
+      task_id: string;
+      campaign_id: string;
+      asset_type: string;
+      status: string;
+      message: string;
+    }>(`/campaigns/${campaignId}/generate/headlines`, {
+      method: 'POST',
+      body: JSON.stringify({ headline_type: headlineType, count }),
+    });
+  }
+
+  async generateDescriptionsAsync(campaignId: string, count: number = 3) {
+    return this.request<{
+      task_id: string;
+      campaign_id: string;
+      asset_type: string;
+      status: string;
+      message: string;
+    }>(`/campaigns/${campaignId}/generate/descriptions`, {
+      method: 'POST',
+      body: JSON.stringify({ count }),
+    });
+  }
+
+  async generateImagesAsync(campaignId: string, count: number = 3) {
+    return this.request<{
+      task_id: string;
+      campaign_id: string;
+      asset_type: string;
+      status: string;
+      message: string;
+    }>(`/campaigns/${campaignId}/generate/images`, {
+      method: 'POST',
+      body: JSON.stringify({ count }),
+    });
+  }
+
+  async generateVideosAsync(campaignId: string, duration: number = 15) {
+    return this.request<{
+      task_id: string;
+      campaign_id: string;
+      asset_type: string;
+      status: string;
+      message: string;
+    }>(`/campaigns/${campaignId}/generate/videos`, {
+      method: 'POST',
+      body: JSON.stringify({ duration }),
+    });
+  }
+
+  async getGenerationStatus(campaignId: string, taskId: string) {
+    return this.request<{
+      task_id: string;
+      status: string;
+      result?: any;
+      error?: string;
+      message?: string;
+    }>(`/campaigns/${campaignId}/generate/status/${taskId}`);
+  }
+
+
   // Analytics endpoints
   async generateAnalyticsReport(capabilityId: string, request: {
     report_type: string;

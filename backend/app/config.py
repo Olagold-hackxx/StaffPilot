@@ -52,9 +52,11 @@ class Settings(BaseSettings):
     
     # Vector Database
     VECTOR_DB_PROVIDER: str = "chromadb"  # Options: chromadb, pinecone, qdrant, pgvector
-    CHROMA_DB_PATH: str = "./chroma_db"  # Path for ChromaDB persistence
+    CHROMA_DB_PATH: str = "./chroma_db"  # Path for ChromaDB persistence (local mode)
+    CHROMA_HTTP_HOST: Optional[str] = None  # Set to use ChromaDB HTTP client mode (e.g., "chromadb-server")
+    CHROMA_HTTP_PORT: int = 8000  # ChromaDB HTTP server port
     PINECONE_API_KEY: Optional[str] = None
-    PINECONE_ENVIRONMENT: Optional[str] = None
+    PINECONE_HOST: Optional[str] = None  # Pinecone host URL (e.g., "https://staffpilot-xyz.svc.pinecone.io")
     PINECONE_INDEX_NAME: str = "staffpilot"
     QDRANT_URL: Optional[str] = None
     QDRANT_API_KEY: Optional[str] = None
