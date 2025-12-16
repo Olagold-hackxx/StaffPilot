@@ -855,6 +855,84 @@ class TwitterPostingService:
                     "post_id": post_id,
                 }
             
+            # Handle 403 Forbidden - try refreshing token and retry once
+            if response.status_code == 403 and refresh_token and client_id and client_secret:
+                logger.warning("[Twitter] Received 403 Forbidden. Attempting token refresh and retry...")
+                
+                # Force refresh the token
+                required_scopes = "tweet.read tweet.write users.read offline.access"
+                retry_refresh_result = await TwitterPostingService.refresh_access_token(
+                    refresh_token=refresh_token,
+                    client_id=client_id,
+                    client_secret=client_secret,
+                    scope=required_scopes
+                )
+                
+                if retry_refresh_result.get("success"):
+                    new_bearer_token = retry_refresh_result["access_token"]
+                    new_refresh_token = retry_refresh_result.get("refresh_token", refresh_token)
+                    expires_in = retry_refresh_result.get("expires_in", 7200)
+                    new_expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+                    
+                    logger.info("[Twitter] Token refreshed successfully, retrying post...")
+                    
+                    # Update token in database
+                    if integration_id and db_session:
+                        try:
+                            from app.models.integration import SocialIntegration
+                            from sqlalchemy import update
+                            from uuid import UUID
+                            import inspect
+                            
+                            update_values = {
+                                'access_token': new_bearer_token,
+                                'token_expires_at': new_expires_at
+                            }
+                            if new_refresh_token:
+                                update_values['refresh_token'] = new_refresh_token
+                            
+                            is_async = inspect.iscoroutinefunction(getattr(db_session, 'execute', None))
+                            update_stmt = (
+                                update(SocialIntegration)
+                                .where(SocialIntegration.id == UUID(integration_id) if isinstance(integration_id, str) else integration_id)
+                                .values(**update_values)
+                            )
+                            
+                            if is_async:
+                                await db_session.execute(update_stmt)
+                                await db_session.commit()
+                            else:
+                                db_session.execute(update_stmt)
+                                db_session.commit()
+                            
+                            logger.info(f"[Twitter] Updated token in database after 403 retry")
+                        except Exception as db_error:
+                            logger.warning(f"[Twitter] Failed to update token in database during retry: {str(db_error)}")
+                    
+                    # Retry the post with new token
+                    retry_headers = {
+                        "Authorization": f"Bearer {new_bearer_token}",
+                        "Content-Type": "application/json",
+                    }
+                    
+                    retry_response = requests.post(tweet_url, headers=retry_headers, json=payload)
+                    logger.info(f"[Twitter] Retry response status: {retry_response.status_code}")
+                    
+                    if retry_response.status_code in [200, 201]:
+                        response_data = retry_response.json()
+                        post_id = response_data.get("data", {}).get("id")
+                        logger.info(f"[Twitter] Post successful after retry, post_id: {post_id}")
+                        return {
+                            "success": True,
+                            "post_id": post_id,
+                        }
+                    else:
+                        retry_error_text = retry_response.text
+                        logger.error(f"[Twitter] Retry also failed with status {retry_response.status_code}: {retry_error_text}")
+                        return {"success": False, "error": f"Post failed after token refresh retry: {retry_error_text}"}
+                else:
+                    logger.error(f"[Twitter] Token refresh for retry also failed: {retry_refresh_result.get('error')}")
+            
             # Log detailed error information
             error_text = response.text
             try:

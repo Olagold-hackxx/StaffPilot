@@ -885,11 +885,18 @@ def post_to_social_platform(
             )
         
         elif platform == "twitter":
-            return TwitterPostingService.post(
+            # TwitterPostingService.post is async, so use asyncio.run()
+            # Pass refresh token parameters from integration_data for token refresh on 403
+            import asyncio
+            return asyncio.run(TwitterPostingService.post(
                 text=content,
                 access_token=access_token,
-                image_urls=media_urls
-            )
+                image_urls=media_urls,
+                refresh_token=integration_data.get("refresh_token"),
+                client_id=integration_data.get("client_id"),
+                client_secret=integration_data.get("client_secret"),
+                integration_id=integration_data.get("integration_id")
+            ))
         
         elif platform == "tiktok":
             if not media_urls or not any(url.endswith(('.mp4', '.mov', '.avi')) for url in (media_urls or [])):
