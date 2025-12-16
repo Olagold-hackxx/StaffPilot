@@ -52,7 +52,7 @@ google-auth-httplib2>=0.1.0
 
 # LLM Providers
 google-generativeai==0.3.2  # Gemini (legacy API for content generation - compatible with langchain-google-genai)
-google-genai>=1.0.0  # New Google GenAI SDK (for image generation with imagen-4.0)
+google-genai>=1.16.1   # New Google GenAI SDK (for image generation with imagen-4.0)
 openai==1.12.0  # OpenAI
 anthropic==0.18.1  # Anthropic Claude
 
