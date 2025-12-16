@@ -69,9 +69,9 @@ class Settings(BaseSettings):
     GOOGLE_API_KEY: Optional[str] = None  # For Gemini
     
     # Gemini Model Configuration
-    GOOGLE_MODEL_CONTENT: str = "gemini-2.5-flash"  # For content generation (set GOOGLE_MODEL_CONTENT=gemini-2.5-flash-exp in .env)
-    GOOGLE_MODEL_IMAGE: str = "gemini-2.5-flash-image"  # For image generation using generate_content() method
-    GOOGLE_MODEL_VIDEO: str = "veo-3.1-generate-preview"  # For video generation
+    GOOGLE_MODEL_CONTENT: str = "gemini-2.5-flash"  # For content generation
+    GOOGLE_MODEL_IMAGE: str = "gemini-2.5-flash-image"  # For image generation
+    GOOGLE_MODEL_VIDEO: str = "veo-3.1-generate-preview"  # For video generation (with audio)
     GOOGLE_EMBEDDING_MODEL: str = "text-embedding-004"  # For embeddings
     
     # OpenAI Model Configuration

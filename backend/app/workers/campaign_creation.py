@@ -1562,8 +1562,12 @@ Make it visually striking and suitable for digital advertising."""
                         image_bytes = BytesIO()
                         if isinstance(image_data, bytes):
                             image_bytes.write(image_data)
+                        elif isinstance(image_data, list) and len(image_data) > 0:
+                            # Handle list of bytes (multiple images)
+                            image_bytes.write(image_data[0] if isinstance(image_data[0], bytes) else bytes(image_data[0]))
                         else:
-                            image_bytes.write(bytes(image_data))
+                            # Already bytes-like, write directly
+                            image_bytes.write(image_data)
                         
                         image_bytes.seek(0)
                         storage_key = f"tenants/{tenant_id}/campaigns/{campaign_id}/images/{uuid_lib.uuid4()}.png"
@@ -1578,18 +1582,15 @@ Make it visually striking and suitable for digital advertising."""
                 except Exception as e:
                     logger.error(f"Image {i+1} generation failed: {e}")
             
-            # Update campaign images
-            existing_images = campaign.images or []
+            # Update campaign plan with generated images
+            plan = campaign.plan or {}
+            existing_images = plan.get('generated_images', [])
             for url in image_urls:
-                existing_images.append({
-                    "id": str(uuid_lib.uuid4()),
-                    "url": url,
-                    "type": "image",
-                    "platform": "google_ads"
-                })
+                existing_images.append(url)
             
-            campaign.images = existing_images
-            flag_modified(campaign, "images")
+            plan['generated_images'] = existing_images
+            campaign.plan = plan
+            flag_modified(campaign, "plan")
             db.commit()
             
             logger.info(f"=== IMAGE GENERATION COMPLETED: {len(image_urls)} images ===")
@@ -1690,18 +1691,15 @@ Make it engaging and attention-grabbing from the first second."""
             except Exception as e:
                 logger.error(f"Video generation failed: {e}")
             
-            # Update campaign videos
-            existing_videos = campaign.videos or []
+            # Update campaign plan with generated videos
+            plan = campaign.plan or {}
+            existing_videos = plan.get('generated_videos', [])
             for url in video_urls:
-                existing_videos.append({
-                    "id": str(uuid_lib.uuid4()),
-                    "url": url,
-                    "type": "video",
-                    "platform": "youtube"
-                })
+                existing_videos.append(url)
             
-            campaign.videos = existing_videos
-            flag_modified(campaign, "videos")
+            plan['generated_videos'] = existing_videos
+            campaign.plan = plan
+            flag_modified(campaign, "plan")
             db.commit()
             
             logger.info(f"=== VIDEO GENERATION COMPLETED: {len(video_urls)} videos ===")

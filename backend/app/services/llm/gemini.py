@@ -516,7 +516,7 @@ Return your response as valid JSON only. Do not include any markdown formatting 
         aspect_ratio: str = "16:9"
     ) -> bytes:
         """
-        Generate video using Veo 3.1 model via the new google.genai API.
+        Generate video using Veo model via the google.genai API.
         
         Args:
             prompt: Text prompt for video generation
@@ -527,96 +527,25 @@ Return your response as valid JSON only. Do not include any markdown formatting 
             Video data as bytes (MP4 format)
         """
         try:
-            import time
-            
             model_name = self.video_model_name or "veo-3.1-generate-preview"
             logger.info(f"Generating video with {model_name}, prompt: {prompt[:100]}..., duration: {duration_seconds}s")
             
+            # Check if video generation is available
+            if not hasattr(self.genai_client.models, 'generate_videos'):
+                available = [m for m in dir(self.genai_client.models) if not m.startswith('_')]
+                raise Exception(
+                    f"Video generation (generate_videos) not available in your google-genai library. "
+                    f"Available methods: {available}. "
+                    f"Please upgrade: pip install --upgrade google-genai"
+                )
+            
             def _generate():
                 # Start video generation - returns an operation
-                
-                # Configuration for the video (if supported)
-                config = {'duration_seconds': float(duration_seconds), 'aspect_ratio': aspect_ratio}
-                call_kwargs = {'model': model_name, 'prompt': prompt}
-                
-                # Try creating a config object if types is available
-                if types and hasattr(types, 'GenerateVideosConfig'):
-                    try:
-                        cfg_obj = types.GenerateVideosConfig(
-                            aspect_ratio=aspect_ratio,
-                            duration_seconds=float(duration_seconds)
-                        )
-                        call_kwargs['config'] = cfg_obj
-                    except Exception as e:
-                        logger.warning(f"Failed to create GenerateVideosConfig: {e}")
-                        call_kwargs['config'] = config
-                else:
-                    call_kwargs['config'] = config
-
-                # 1. Try client.models.generate_videos (Standard)
-                try:
-                    if hasattr(self.genai_client.models, 'generate_videos'):
-                        return self.genai_client.models.generate_videos(**call_kwargs)
-                except Exception as e:
-                    logger.warning(f"client.models.generate_videos failed: {e}")
-
-                # 2. Try client.generate_videos (Alternative)
-                try:
-                    if hasattr(self.genai_client, 'generate_videos'):
-                        return self.genai_client.generate_videos(**call_kwargs)
-                except Exception as e:
-                    logger.warning(f"client.generate_videos failed: {e}")
-
-                # 3. Try singular naming: client.models.generate_video
-                try:
-                    if hasattr(self.genai_client.models, 'generate_video'):
-                        return self.genai_client.models.generate_video(**call_kwargs)
-                except Exception as e:
-                    logger.warning(f"client.models.generate_video failed: {e}")
-
-                # 4. Try singular naming: client.generate_video
-                try:
-                    if hasattr(self.genai_client, 'generate_video'):
-                        return self.genai_client.generate_video(**call_kwargs)
-                except Exception as e:
-                    logger.warning(f"client.generate_video failed: {e}")
-
-                # 5. Fallback: Try getting model instance (Wrapped to prevent crash)
-                try:
-                    logger.info("Attempting fallback to models.get() pattern...")
-                    video_model = self.genai_client.models.get(model_name)
-                    
-                    if hasattr(video_model, 'generate_videos'):
-                        return video_model.generate_videos(prompt=prompt, config=call_kwargs.get('config'))
-                    elif hasattr(video_model, 'generate'):
-                        return video_model.generate(prompt=prompt, config=call_kwargs.get('config'))
-                    else:
-                        raise AttributeError("Model instance found but has no generate methods")
-                except TypeError as type_error:
-                     # Specific catch for "Models.get() takes 1 positional argument" error
-                     logger.warning(f"Fallback to models.get() failed with TypeError (known issue in some versions): {type_error}")
-                except Exception as fallback_error:
-                    logger.warning(f"Fallback to models.get() failed: {fallback_error}")
-                
-                 # 6. Fallback: Try with v1beta API version (often needed for Veo/experimental)
-                try:
-                    logger.info("Attempting fallback to v1beta API client...")
-                    # Create a temporary client with v1beta
-                    beta_client = genai.Client(api_key=self.api_key, http_options={'api_version': 'v1beta'})
-                    
-                    if hasattr(beta_client.models, 'generate_videos'):
-                         logger.info("Found generate_videos on v1beta client!")
-                         return beta_client.models.generate_videos(**call_kwargs)
-                    elif hasattr(beta_client, 'generate_videos'):
-                         return beta_client.generate_videos(**call_kwargs)
-                except Exception as beta_error:
-                    logger.warning(f"Fallback to v1beta client failed: {beta_error}")
-
-                # If we get here, nothing worked
-                # Log available methods for debugging
-                available_models = dir(self.genai_client.models) if hasattr(self.genai_client, 'models') else []
-                logger.error(f"Generate video failed. Available client.models methods: {available_models}")
-                raise AttributeError("Video generation method not found on Google GenAI client (checked standard and v1beta)")
+                operation = self.genai_client.models.generate_videos(
+                    model=model_name,
+                    prompt=prompt
+                )
+                return operation
             
             # Start the operation
             operation = await asyncio.to_thread(_generate)
@@ -638,10 +567,9 @@ Return your response as valid JSON only. Do not include any markdown formatting 
                 
                 # Get updated operation status
                 def _get_operation(op):
-                    # Try operations.get() pattern
                     if hasattr(self.genai_client, 'operations') and hasattr(self.genai_client.operations, 'get'):
-                         return self.genai_client.operations.get(op)
-                    return op # If API doesn't support polling this way, rely on internal update
+                        return self.genai_client.operations.get(op)
+                    return op
                 
                 operation = await asyncio.to_thread(_get_operation, operation)
             
@@ -679,7 +607,6 @@ Return your response as valid JSON only. Do not include any markdown formatting 
             elif isinstance(video_file, bytes):
                 video_data = video_file
             else:
-                # Try to get content attribute
                 video_data = getattr(video_file, 'content', None)
                 if not video_data:
                     raise Exception(f"Unable to extract video data from file object: {type(video_file)}")
@@ -691,8 +618,8 @@ Return your response as valid JSON only. Do not include any markdown formatting 
             return video_data
             
         except Exception as e:
-            logger.error(f"Gemini video generation failed: {str(e)}", exc_info=True)
-            raise Exception(f"Gemini video generation failed: {str(e)}")
+            logger.error(f"Video generation failed: {str(e)}", exc_info=True)
+            raise Exception(f"Video generation failed: {str(e)}")
     
     def generate_video_sync(
         self,
@@ -718,25 +645,20 @@ Return your response as valid JSON only. Do not include any markdown formatting 
             model_name = self.video_model_name or "veo-3.1-generate-preview"
             logger.info(f"[SYNC] Generating video with {model_name}, duration: {duration_seconds}s")
             
-            # Configure video generation
-            config = None
-            if types and hasattr(types, 'GenerateVideosConfig'):
-                config = types.GenerateVideosConfig(
-                    aspect_ratio=aspect_ratio,
-                    duration_seconds=float(duration_seconds)
+            # Check if video generation is available
+            if not hasattr(self.genai_client.models, 'generate_videos'):
+                available = [m for m in dir(self.genai_client.models) if not m.startswith('_')]
+                raise Exception(
+                    f"Video generation (generate_videos) not available. "
+                    f"Available methods: {available}. "
+                    f"Please upgrade: pip install --upgrade google-genai"
                 )
             
             # Start video generation
-            call_kwargs = {'model': model_name, 'prompt': prompt}
-            if config:
-                call_kwargs['config'] = config
-            
-            if hasattr(self.genai_client.models, 'generate_videos'):
-                operation = self.genai_client.models.generate_videos(**call_kwargs)
-            elif hasattr(self.genai_client, 'generate_videos'):
-                operation = self.genai_client.generate_videos(**call_kwargs)
-            else:
-                raise Exception("Video generation method not found")
+            operation = self.genai_client.models.generate_videos(
+                model=model_name,
+                prompt=prompt
+            )
             
             operation_name = operation.name if hasattr(operation, 'name') else str(operation)
             logger.info(f"[SYNC] Video generation operation started: {operation_name}")
@@ -755,7 +677,8 @@ Return your response as valid JSON only. Do not include any markdown formatting 
                 elapsed_time += wait_interval
                 
                 # Get updated operation status
-                operation = self.genai_client.operations.get(operation)
+                if hasattr(self.genai_client, 'operations') and hasattr(self.genai_client.operations, 'get'):
+                    operation = self.genai_client.operations.get(operation)
             
             logger.info("[SYNC] Video generation completed!")
             
@@ -797,7 +720,7 @@ Return your response as valid JSON only. Do not include any markdown formatting 
             return video_data
             
         except Exception as e:
-            logger.error(f"[SYNC] Video generation failed: {str(e)}")
+            logger.error(f"[SYNC] Video generation failed: {str(e)}", exc_info=True)
             raise Exception(f"Video generation failed: {str(e)}")
     
     async def generate_embeddings(

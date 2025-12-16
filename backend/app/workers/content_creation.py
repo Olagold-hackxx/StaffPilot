@@ -253,18 +253,36 @@ async def _generate_video_async(
     """
     Async helper function to generate video using AI.
     Can be called directly from async contexts.
+    Note: Uses sync method internally for better Celery compatibility.
     """
-    from app.services.llm.factory import create_llm_service
-    
-    llm_service = create_llm_service()
-    video = await llm_service.generate_video(
-        prompt=prompt,
-        duration_seconds=duration_seconds
-    )
-    return {
-        "success": True,
-        "video": video
-    }
+    try:
+        from app.services.llm.factory import create_llm_service
+        
+        llm_service = create_llm_service()
+        
+        # Use sync method for better Celery compatibility
+        if hasattr(llm_service, 'generate_video_sync'):
+            video = llm_service.generate_video_sync(
+                prompt=prompt,
+                duration_seconds=duration_seconds
+            )
+        else:
+            # Fallback to async if sync not available
+            video = await llm_service.generate_video(
+                prompt=prompt,
+                duration_seconds=duration_seconds
+            )
+        
+        return {
+            "success": True,
+            "video": video
+        }
+    except Exception as e:
+        logger.error(f"Video generation failed: {str(e)}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
 
 
 def _generate_content_direct(
@@ -493,18 +511,24 @@ def generate_video_task(
         Dictionary with video data or URL
     """
     try:
-        async def _generate():
-            from app.services.llm.factory import create_llm_service
-            
-            llm_service = create_llm_service()
-            video = await llm_service.generate_video(
+        from app.services.llm.factory import create_llm_service
+        
+        llm_service = create_llm_service()
+        
+        # Use sync method for Celery worker compatibility
+        if hasattr(llm_service, 'generate_video_sync'):
+            video = llm_service.generate_video_sync(
                 prompt=prompt,
                 duration_seconds=duration_seconds
             )
-            return video
-        
-        # Use asyncio.run() which properly manages the event loop lifecycle
-        video = asyncio.run(_generate())
+        else:
+            # Fallback to async if sync not available
+            async def _generate():
+                return await llm_service.generate_video(
+                    prompt=prompt,
+                    duration_seconds=duration_seconds
+                )
+            video = asyncio.run(_generate())
         
         return {
             "success": True,
