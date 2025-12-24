@@ -1666,3 +1666,344 @@ async def get_generation_status(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to check generation status: {str(e)}"
         )
+
+
+# =====================
+# Brand Assets API
+# =====================
+
+from fastapi import UploadFile, File, Form
+
+class BrandAssetResponse(BaseModel):
+    """Response schema for brand asset"""
+    id: str
+    name: str
+    description: Optional[str]
+    asset_type: str
+    source: str
+    url: str
+    thumbnail_url: Optional[str]
+    file_name: Optional[str]
+    file_size: Optional[int]
+    mime_type: Optional[str]
+    width: Optional[int]
+    height: Optional[int]
+    duration: Optional[int]
+    usage_count: int
+    created_at: str
+
+
+class BrandAssetListResponse(BaseModel):
+    """Response schema for list of brand assets"""
+    assets: List[BrandAssetResponse]
+    total: int
+
+
+class GenerateVideoWithAssetsRequest(BaseModel):
+    """Request to generate video with brand assets"""
+    duration: int = 15  # Target duration in seconds (8-60)
+    brand_asset_ids: Optional[List[str]] = None  # IDs of brand assets to use as references
+
+
+@router.get("/campaigns/{campaign_id}/brand-assets", response_model=BrandAssetListResponse)
+async def list_brand_assets(
+    campaign_id: UUID,
+    current_tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    List all brand assets for a campaign.
+    """
+    try:
+        from app.models.brand_asset import BrandAsset
+        
+        # Verify campaign exists
+        result = await db.execute(
+            select(Campaign).where(
+                Campaign.id == campaign_id,
+                Campaign.tenant_id == current_tenant.id
+            )
+        )
+        campaign = result.scalar_one_or_none()
+        
+        if not campaign:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Campaign not found"
+            )
+        
+        # Get brand assets for this campaign and tenant-wide assets
+        query = select(BrandAsset).where(
+            BrandAsset.tenant_id == current_tenant.id,
+            BrandAsset.is_active == True,
+            (BrandAsset.campaign_id == campaign_id) | (BrandAsset.campaign_id.is_(None))
+        ).order_by(BrandAsset.created_at.desc())
+        
+        result = await db.execute(query)
+        assets = result.scalars().all()
+        
+        return BrandAssetListResponse(
+            assets=[
+                BrandAssetResponse(
+                    id=str(a.id),
+                    name=a.name,
+                    description=a.description,
+                    asset_type=a.asset_type,
+                    source=a.source,
+                    url=a.url,
+                    thumbnail_url=a.thumbnail_url,
+                    file_name=a.file_name,
+                    file_size=a.file_size,
+                    mime_type=a.mime_type,
+                    width=a.width,
+                    height=a.height,
+                    duration=a.duration,
+                    usage_count=a.usage_count or 0,
+                    created_at=a.created_at.isoformat() if a.created_at else ""
+                )
+                for a in assets
+            ],
+            total=len(assets)
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error listing brand assets: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list brand assets: {str(e)}"
+        )
+
+
+@router.post("/campaigns/{campaign_id}/brand-assets", response_model=BrandAssetResponse)
+async def upload_brand_asset(
+    campaign_id: UUID,
+    file: UploadFile = File(...),
+    name: str = Form(...),
+    description: Optional[str] = Form(None),
+    current_tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Upload a brand asset (image or video) for use in AI generation.
+    """
+    try:
+        from app.models.brand_asset import BrandAsset
+        from app.services.storage import get_storage
+        from io import BytesIO
+        import uuid as uuid_lib
+        
+        # Verify campaign exists
+        result = await db.execute(
+            select(Campaign).where(
+                Campaign.id == campaign_id,
+                Campaign.tenant_id == current_tenant.id
+            )
+        )
+        campaign = result.scalar_one_or_none()
+        
+        if not campaign:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Campaign not found"
+            )
+        
+        # Validate file type
+        content_type = file.content_type or ""
+        if content_type.startswith("image/"):
+            asset_type = "image"
+        elif content_type.startswith("video/"):
+            asset_type = "video"
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid file type. Only images and videos are allowed."
+            )
+        
+        # Read file content
+        file_content = await file.read()
+        file_size = len(file_content)
+        
+        # Upload to storage
+        storage = get_storage()
+        file_ext = file.filename.split(".")[-1] if file.filename and "." in file.filename else "bin"
+        storage_key = f"tenants/{current_tenant.id}/campaigns/{campaign_id}/brand-assets/{uuid_lib.uuid4()}.{file_ext}"
+        
+        file_bytes = BytesIO(file_content)
+        url = await storage.upload(key=storage_key, file=file_bytes, content_type=content_type)
+        
+        # Get image dimensions if applicable
+        width = None
+        height = None
+        if asset_type == "image":
+            try:
+                from PIL import Image
+                img = Image.open(BytesIO(file_content))
+                width, height = img.size
+            except:
+                pass
+        
+        # Create brand asset record
+        brand_asset = BrandAsset(
+            tenant_id=current_tenant.id,
+            campaign_id=campaign_id,
+            name=name,
+            description=description,
+            asset_type=asset_type,
+            source="upload",
+            url=url,
+            file_name=file.filename,
+            file_size=file_size,
+            mime_type=content_type,
+            width=width,
+            height=height,
+            created_by=current_user.id
+        )
+        
+        db.add(brand_asset)
+        await db.commit()
+        await db.refresh(brand_asset)
+        
+        logger.info(f"Uploaded brand asset {brand_asset.id} for campaign {campaign_id}")
+        
+        return BrandAssetResponse(
+            id=str(brand_asset.id),
+            name=brand_asset.name,
+            description=brand_asset.description,
+            asset_type=brand_asset.asset_type,
+            source=brand_asset.source,
+            url=brand_asset.url,
+            thumbnail_url=brand_asset.thumbnail_url,
+            file_name=brand_asset.file_name,
+            file_size=brand_asset.file_size,
+            mime_type=brand_asset.mime_type,
+            width=brand_asset.width,
+            height=brand_asset.height,
+            duration=brand_asset.duration,
+            usage_count=brand_asset.usage_count or 0,
+            created_at=brand_asset.created_at.isoformat() if brand_asset.created_at else ""
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error uploading brand asset: {str(e)}")
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to upload brand asset: {str(e)}"
+        )
+
+
+@router.delete("/campaigns/{campaign_id}/brand-assets/{asset_id}")
+async def delete_brand_asset(
+    campaign_id: UUID,
+    asset_id: UUID,
+    current_tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Delete a brand asset.
+    """
+    try:
+        from app.models.brand_asset import BrandAsset
+        
+        # Get asset
+        result = await db.execute(
+            select(BrandAsset).where(
+                BrandAsset.id == asset_id,
+                BrandAsset.tenant_id == current_tenant.id
+            )
+        )
+        asset = result.scalar_one_or_none()
+        
+        if not asset:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Brand asset not found"
+            )
+        
+        # Soft delete - just mark as inactive
+        asset.is_active = False
+        await db.commit()
+        
+        logger.info(f"Deleted brand asset {asset_id}")
+        
+        return {"success": True, "message": "Brand asset deleted"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting brand asset: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete brand asset: {str(e)}"
+        )
+
+
+@router.post("/campaigns/{campaign_id}/generate/videos-with-assets", response_model=GenerateAssetResponse)
+async def generate_videos_with_brand_assets(
+    campaign_id: UUID,
+    request: GenerateVideoWithAssetsRequest,
+    current_tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Generate video for a campaign using Celery background task with brand assets as reference images.
+    Supports video extension to reach target duration (up to 60 seconds).
+    """
+    try:
+        # Verify campaign exists
+        result = await db.execute(
+            select(Campaign).where(
+                Campaign.id == campaign_id,
+                Campaign.tenant_id == current_tenant.id
+            )
+        )
+        campaign = result.scalar_one_or_none()
+        
+        if not campaign:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Campaign not found"
+            )
+        
+        # Validate duration
+        if request.duration < 8:
+            request.duration = 8
+        if request.duration > 60:
+            request.duration = 60
+        
+        from app.workers.campaign_creation import generate_videos_with_assets_task
+        
+        celery_result = generate_videos_with_assets_task.delay(
+            campaign_id=str(campaign_id),
+            tenant_id=str(current_tenant.id),
+            target_duration=request.duration,
+            brand_asset_ids=request.brand_asset_ids
+        )
+        
+        logger.info(f"Started video generation with assets task {celery_result.id} for campaign {campaign_id}")
+        
+        extensions_needed = (request.duration - 8) // 8
+        time_estimate = 5 + (extensions_needed * 3)  # Base 5 mins + 3 mins per extension
+        
+        return GenerateAssetResponse(
+            task_id=celery_result.id,
+            campaign_id=str(campaign_id),
+            asset_type="videos",
+            status="queued",
+            message=f"Generating {request.duration}s video with {len(request.brand_asset_ids or [])} reference assets (estimated {time_estimate} minutes)"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error starting video generation with assets: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to start video generation: {str(e)}"
+        )
+

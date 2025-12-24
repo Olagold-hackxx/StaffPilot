@@ -1041,6 +1041,40 @@ def _execute_image_generation(
         except Exception as e:
             logger.warning(f"Failed to retrieve RAG context for images: {e}")
 
+    # Fetch brand assets for reference images
+    brand_asset_context = ""
+    reference_image_bytes = []
+    try:
+        from app.models.brand_asset import BrandAsset
+        from sqlalchemy import select
+        import httpx
+        
+        result = db.execute(
+            select(BrandAsset)
+            .where(BrandAsset.tenant_id == UUID(tenant_id))
+            .where(BrandAsset.asset_type == "image")
+            .limit(3)
+        )
+        brand_assets = result.scalars().all()
+        if brand_assets:
+            brand_asset_context = f"\n\nBRAND ASSETS: Using {len(brand_assets)} brand reference images to maintain visual consistency."
+            logger.info(f"Found {len(brand_assets)} brand assets for campaign image generation")
+            
+            # Download asset bytes
+            for asset in brand_assets:
+                try:
+                    if asset.url:
+                        with httpx.Client(timeout=30.0) as client:
+                            response = client.get(asset.url)
+                            if response.status_code == 200:
+                                reference_image_bytes.append(response.content)
+                                logger.info(f"Fetched brand asset bytes for image gen: {asset.name}")
+                except Exception as e:
+                    logger.warning(f"Failed to fetch asset bytes {asset.id}: {e}")
+            
+    except Exception as e:
+        logger.warning(f"Failed to fetch brand assets: {e}")
+
     prompt = f"""Generate a high-end, premium advertising image for the campaign "{campaign_name}".
 
 Context: {step_description}
@@ -1057,6 +1091,8 @@ Style Direction:
 - Resolution: 8k, highly detailed
 - Follow the Brand Guidelines above if provided.
 
+IMPORTANT: Ensure all text in the generated media is in English and free of spelling mistakes.
+
 Create an image that perfectly captures the campaign's visual identity.
 """
     
@@ -1071,7 +1107,8 @@ Create an image that perfectly captures the campaign's visual identity.
             # generate_image_sync returns List[bytes]
             image_bytes_list = llm_service.generate_image_sync(
                 prompt=prompt,
-                number_of_images=1
+                number_of_images=1,
+                reference_images=reference_image_bytes if reference_image_bytes else None
             )
             logger.info(f"DEBUG: generate_image_sync returned {len(image_bytes_list) if image_bytes_list else 0} images")
             
@@ -1184,29 +1221,65 @@ Product/Service: {product_brief if product_brief else 'General marketing'}
 {context_str}
 
 DIRECTION:
-Create a compelling video ad that:
-- Opens with a strong hook
-- Builds intrigue and engagement
-- Has professional production quality (Cinematic, Filmmaking style)
 - Conveys the brand message effectively
 - Ends with a clear call to action
+
+IMPORTANT: Ensure all text in the generated media is in English and free of spelling mistakes.
 """
     
     # Use sync methods (no asyncio needed for Celery workers)
     llm_service = create_llm_service()
+    
+    # Fetch brand assets for reference images
+    reference_images = []
+    try:
+        from app.models.brand_asset import BrandAsset
+        from sqlalchemy import select
+        import httpx
+        
+        result = db.execute(
+            select(BrandAsset)
+            .where(BrandAsset.tenant_id == UUID(tenant_id))
+            .where(BrandAsset.asset_type == "image")
+            .limit(3)  # Veo 3.1 supports up to 3 reference images
+        )
+        brand_assets = result.scalars().all()
+        
+        if brand_assets:
+            logger.info(f"Found {len(brand_assets)} brand assets for video reference")
+            for asset in brand_assets:
+                try:
+                    if asset.url:
+                        with httpx.Client(timeout=30.0) as client:
+                            response = client.get(asset.url)
+                            if response.status_code == 200:
+                                reference_images.append(response.content)
+                                logger.info(f"Fetched brand asset for video: {asset.name}")
+                except Exception as e:
+                    logger.warning(f"Failed to fetch asset {asset.id}: {e}")
+    except Exception as e:
+        logger.warning(f"Failed to fetch brand assets for video: {e}")
     
     # Variable duration: pick a random value between 8 and 60 seconds
     import random
     video_duration = random.choice([8, 15, 30, 45, 60])
     
     # Generate video synchronously (this can take several minutes)
-    logger.info(f"Starting video generation ({video_duration}s) - this may take 2-10 minutes...")
+    logger.info(f"Starting video generation ({video_duration}s) with {len(reference_images)} brand asset references...")
     try:
-        video_data = llm_service.generate_video_sync(
-            prompt=video_prompt,
-            duration_seconds=video_duration,
-            aspect_ratio="16:9"
-        )
+        # Use references if available
+        if reference_images and hasattr(llm_service, 'generate_video_with_references_sync'):
+            video_data = llm_service.generate_video_with_references_sync(
+                prompt=video_prompt,
+                reference_images=reference_images,
+                aspect_ratio="16:9"
+            )
+        else:
+            video_data = llm_service.generate_video_sync(
+                prompt=video_prompt,
+                duration_seconds=video_duration,
+                aspect_ratio="16:9"
+            )
     except Exception as e:
         logger.error(f"Video generation failed: {e}")
         # Mock on failure for demo
@@ -1718,3 +1791,181 @@ Make it engaging and attention-grabbing from the first second."""
         logger.error(f"Video generation failed: {str(e)}", exc_info=True)
         raise self.retry(exc=e, countdown=120)
 
+
+@celery_app.task(name="campaign.generate_videos_with_assets", bind=True, max_retries=1, time_limit=1800)
+def generate_videos_with_assets_task(
+    self,
+    campaign_id: str,
+    tenant_id: str,
+    target_duration: int = 15,
+    brand_asset_ids: list = None
+) -> Dict[str, Any]:
+    """
+    Generate video for a campaign using AI video generation with brand assets as reference images.
+    Supports video extension to reach target duration (up to 60 seconds).
+    
+    Args:
+        campaign_id: Campaign UUID string
+        tenant_id: Tenant UUID string
+        target_duration: Target video duration in seconds (8-60)
+        brand_asset_ids: Optional list of brand asset UUIDs to use as references
+    
+    Returns:
+        Dict with video URLs and generation details
+    """
+    try:
+        logger.info(f"=== VIDEO GENERATION WITH ASSETS STARTED ===")
+        logger.info(f"Campaign: {campaign_id}, Duration: {target_duration}s, Assets: {len(brand_asset_ids or [])}")
+        
+        from app.db.session import create_worker_session_factory
+        from app.models.campaign import Campaign
+        from app.models.brand_asset import BrandAsset
+        from app.services.llm.factory import create_llm_service
+        from app.services.storage import get_storage
+        from sqlalchemy import select
+        from sqlalchemy.orm.attributes import flag_modified
+        from io import BytesIO
+        import uuid as uuid_lib
+        import requests
+        
+        SessionFactory = create_worker_session_factory()
+        db = SessionFactory()
+        
+        try:
+            # Get campaign
+            result = db.execute(
+                select(Campaign).where(Campaign.id == UUID(campaign_id))
+            )
+            campaign = result.scalar_one_or_none()
+            
+            if not campaign:
+                raise Exception(f"Campaign {campaign_id} not found")
+            
+            # Fetch brand assets if provided
+            reference_images = []
+            if brand_asset_ids:
+                for asset_id in brand_asset_ids:
+                    try:
+                        asset_result = db.execute(
+                            select(BrandAsset).where(
+                                BrandAsset.id == UUID(asset_id),
+                                BrandAsset.tenant_id == UUID(tenant_id),
+                                BrandAsset.is_active == True,
+                                BrandAsset.asset_type == "image"  # Only images can be reference
+                            )
+                        )
+                        asset = asset_result.scalar_one_or_none()
+                        
+                        if asset and asset.url:
+                            # Download the asset from storage
+                            logger.info(f"Fetching brand asset {asset_id}: {asset.name}")
+                            try:
+                                response = requests.get(asset.url, timeout=30)
+                                if response.status_code == 200:
+                                    reference_images.append(response.content)
+                                    logger.info(f"Loaded brand asset: {asset.name} ({len(response.content)} bytes)")
+                                    
+                                    # Update usage count
+                                    asset.usage_count = (asset.usage_count or 0) + 1
+                                    from datetime import datetime, timezone
+                                    asset.last_used_at = datetime.now(timezone.utc)
+                                else:
+                                    logger.warning(f"Failed to fetch asset {asset_id}: HTTP {response.status_code}")
+                            except Exception as fetch_err:
+                                logger.warning(f"Failed to fetch asset {asset_id}: {fetch_err}")
+                    except Exception as asset_err:
+                        logger.warning(f"Failed to load brand asset {asset_id}: {asset_err}")
+            
+            logger.info(f"Loaded {len(reference_images)} reference images")
+            
+            # Build video prompt
+            campaign_name = campaign.name
+            product_brief = campaign.product_brief or campaign.description or ""
+            
+            video_prompt = f"""Create a professional advertising video for:
+Campaign: {campaign_name}
+Product/Service: {product_brief}
+
+Style: Modern, dynamic, professional video suitable for YouTube ads and social media.
+Duration: {target_duration} seconds.
+Make it engaging and attention-grabbing from the first second."""
+
+            # Generate video with assets and extension
+            llm_service = create_llm_service()
+            video_urls = []
+            
+            try:
+                logger.info(f"Generating {target_duration}s video with {len(reference_images)} references...")
+                
+                # Use the new extended video generation with references
+                if hasattr(llm_service, 'generate_extended_video_sync'):
+                    video_data = llm_service.generate_extended_video_sync(
+                        prompt=video_prompt,
+                        target_duration_seconds=target_duration,
+                        reference_images=reference_images if reference_images else None,
+                        aspect_ratio="16:9"
+                    )
+                elif reference_images and hasattr(llm_service, 'generate_video_with_references_sync'):
+                    video_data = llm_service.generate_video_with_references_sync(
+                        prompt=video_prompt,
+                        reference_images=reference_images,
+                        aspect_ratio="16:9"
+                    )
+                else:
+                    video_data = llm_service.generate_video_sync(
+                        prompt=video_prompt,
+                        duration_seconds=target_duration,
+                        aspect_ratio="16:9"
+                    )
+                
+                if video_data:
+                    storage = get_storage()
+                    video_bytes = BytesIO()
+                    if isinstance(video_data, bytes):
+                        video_bytes.write(video_data)
+                    else:
+                        video_bytes.write(bytes(video_data))
+                    
+                    video_bytes.seek(0)
+                    storage_key = f"tenants/{tenant_id}/campaigns/{campaign_id}/videos/{uuid_lib.uuid4()}.mp4"
+                    
+                    url = storage.upload_sync(
+                        key=storage_key,
+                        file=video_bytes,
+                        content_type="video/mp4"
+                    )
+                    video_urls.append(url)
+                    logger.info(f"Uploaded video to: {url}")
+                    
+            except Exception as e:
+                logger.error(f"Video generation with assets failed: {e}")
+                raise
+            
+            # Update campaign plan with generated videos
+            plan = campaign.plan or {}
+            existing_videos = plan.get('generated_videos', [])
+            for url in video_urls:
+                existing_videos.append(url)
+            
+            plan['generated_videos'] = existing_videos
+            campaign.plan = plan
+            flag_modified(campaign, "plan")
+            db.commit()
+            
+            logger.info(f"=== VIDEO GENERATION WITH ASSETS COMPLETED: {len(video_urls)} videos ===")
+            
+            return {
+                "success": True,
+                "campaign_id": campaign_id,
+                "video_urls": video_urls,
+                "count": len(video_urls),
+                "target_duration": target_duration,
+                "reference_count": len(reference_images)
+            }
+            
+        finally:
+            db.close()
+            
+    except Exception as e:
+        logger.error(f"Video generation with assets failed: {str(e)}", exc_info=True)
+        raise self.retry(exc=e, countdown=120)

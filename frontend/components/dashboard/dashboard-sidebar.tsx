@@ -17,7 +17,8 @@ import {
   BarChart3,
   ChevronLeft,
   ChevronRight,
-  Zap
+  Zap,
+  LayoutGrid
 } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { authService } from "@/lib/auth"
@@ -34,6 +35,7 @@ const navigation = [
   { name: "Overview", href: "/dashboard", icon: LayoutDashboard },
   { name: "Assistants", href: "/dashboard/assistants", icon: Bot },
   { name: "Content", href: "/dashboard/content", icon: ContentIcon },
+  { name: "Brand Assets", href: "/dashboard/brand-assets", icon: LayoutGrid },
   { name: "Campaigns", href: "/dashboard/campaigns", icon: Target },
   { name: "Analytics", href: "/dashboard/analytics", icon: BarChart3 },
   { name: "Chat", href: "/dashboard/chat", icon: MessageSquare },

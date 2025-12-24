@@ -791,6 +791,244 @@ class ApiClient {
     }>(`/campaigns/${campaignId}/generate/status/${taskId}`);
   }
 
+  // Brand Assets API
+  async listBrandAssets(campaignId: string) {
+    return this.request<{
+      assets: Array<{
+        id: string;
+        name: string;
+        description?: string;
+        asset_type: string;
+        source: string;
+        url: string;
+        thumbnail_url?: string;
+        file_name?: string;
+        file_size?: number;
+        mime_type?: string;
+        width?: number;
+        height?: number;
+        duration?: number;
+        usage_count: number;
+        created_at: string;
+      }>;
+      total: number;
+    }>(`/campaigns/${campaignId}/brand-assets`);
+  }
+
+  async uploadBrandAsset(campaignId: string, file: File, name: string, description?: string) {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('name', name);
+    if (description) {
+      formData.append('description', description);
+    }
+
+    const url = `${this.baseUrl}${API_VERSION}/campaigns/${campaignId}/brand-assets`;
+    const headers: HeadersInit = {};
+
+    if (this.token) {
+      headers['Authorization'] = `Bearer ${this.token}`;
+    }
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: response.statusText }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  async deleteBrandAsset(campaignId: string, assetId: string) {
+    return this.request<{ success: boolean; message: string }>(`/campaigns/${campaignId}/brand-assets/${assetId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async generateVideosWithAssetsAsync(campaignId: string, duration: number = 15, brandAssetIds?: string[]) {
+    return this.request<{
+      task_id: string;
+      campaign_id: string;
+      asset_type: string;
+      status: string;
+      message: string;
+    }>(`/campaigns/${campaignId}/generate/videos-with-assets`, {
+      method: 'POST',
+      body: JSON.stringify({ 
+        duration,
+        brand_asset_ids: brandAssetIds 
+      }),
+    });
+  }
+
+
+  // Tenant Brand Assets API (for content generation)
+  async listTenantBrandAssets() {
+    return this.request<{
+      assets: Array<{
+        id: string;
+        name: string;
+        description?: string;
+        asset_type: string;
+        source: string;
+        url: string;
+        thumbnail_url?: string;
+        file_name?: string;
+        file_size?: number;
+        mime_type?: string;
+        width?: number;
+        height?: number;
+        usage_count: number;
+        created_at: string;
+      }>;
+      total: number;
+    }>('/tenants/me/brand-assets');
+  }
+
+  async uploadTenantBrandAsset(file: File, name: string, description?: string) {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('name', name);
+    if (description) {
+      formData.append('description', description);
+    }
+
+    const url = `${this.baseUrl}${API_VERSION}/tenants/me/brand-assets`;
+    const headers: HeadersInit = {};
+
+    if (this.token) {
+      headers['Authorization'] = `Bearer ${this.token}`;
+    }
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: response.statusText }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  async deleteTenantBrandAsset(assetId: string) {
+    return this.request<{ success: boolean; message: string }>(`/tenants/me/brand-assets/${assetId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async generateContentVideo(prompt: string, duration: number = 15, brandAssetIds?: string[]) {
+    return this.request<{
+      task_id: string;
+      status: string;
+      message: string;
+    }>('/tenants/me/generate/video', {
+      method: 'POST',
+      body: JSON.stringify({ 
+        prompt,
+        duration,
+        brand_asset_ids: brandAssetIds 
+      }),
+    });
+  }
+
+  async generateContentImage(prompt: string, brandAssetIds?: string[]) {
+    return this.request<{
+      success: boolean;
+      image_url?: string;
+      message: string;
+    }>('/tenants/me/generate/image', {
+      method: 'POST',
+      body: JSON.stringify({ 
+        prompt,
+        brand_asset_ids: brandAssetIds 
+      }),
+    });
+  }
+
+  // Google Drive Integration
+  async getGoogleDriveStatus() {
+    return this.request<{
+      is_connected: boolean;
+      connected_at?: string;
+    }>('/tenants/me/integrations/google-drive/status');
+  }
+
+  async getGoogleDriveAuthUrl(redirectUri: string) {
+    return this.request<{
+      auth_url: string;
+      is_connected: boolean;
+    }>(`/tenants/me/integrations/google-drive/auth-url?redirect_uri=${encodeURIComponent(redirectUri)}`);
+  }
+
+  async connectGoogleDrive(code: string, redirectUri: string) {
+    return this.request<{
+      is_connected: boolean;
+      connected_at?: string;
+    }>(`/tenants/me/integrations/google-drive/callback?code=${encodeURIComponent(code)}&redirect_uri=${encodeURIComponent(redirectUri)}`, {
+      method: 'POST',
+    });
+  }
+
+  async disconnectGoogleDrive() {
+    return this.request<{
+      is_connected: boolean;
+    }>('/tenants/me/integrations/google-drive', {
+      method: 'DELETE',
+    });
+  }
+
+  async listGoogleDriveFiles(folderId?: string, pageToken?: string) {
+    let url = '/tenants/me/integrations/google-drive/files';
+    const params = new URLSearchParams();
+    if (folderId) params.append('folder_id', folderId);
+    if (pageToken) params.append('page_token', pageToken);
+    if (params.toString()) url += `?${params.toString()}`;
+    
+    return this.request<{
+      files: Array<{
+        id: string;
+        name: string;
+        mime_type: string;
+        type: 'image' | 'video' | 'folder';
+        size?: number;
+        thumbnail_url?: string;
+        created_at?: string;
+        modified_at?: string;
+        parent_id?: string;
+      }>;
+      next_page_token?: string;
+    }>(url);
+  }
+
+  async importFromGoogleDrive(fileIds: string[]) {
+    return this.request<{
+      imported_count: number;
+      assets: Array<{
+        id: string;
+        name: string;
+        description?: string;
+        asset_type: string;
+        source: string;
+        url: string;
+        thumbnail_url?: string;
+        usage_count: number;
+        created_at: string;
+      }>;
+      errors: string[];
+    }>('/tenants/me/brand-assets/import-from-drive', {
+      method: 'POST',
+      body: JSON.stringify({ file_ids: fileIds }),
+    });
+  }
 
   // Analytics endpoints
   async generateAnalyticsReport(capabilityId: string, request: {

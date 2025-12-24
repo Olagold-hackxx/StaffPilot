@@ -111,6 +111,15 @@ const integrationConfigs: Record<string, IntegrationConfig[]> = {
       required: false,
       platforms: ["youtube"],
     },
+    {
+      id: "brand_assets",
+      name: "Brand Assets Storage",
+      description: "Connect cloud storage for brand assets and media files",
+      icon: FileText,
+      category: "Storage",
+      required: false,
+      platforms: ["google_drive"],
+    },
   ],
   customer_support: [
     {
@@ -303,6 +312,33 @@ export default function IntegrationsPage() {
     const oauth1 = searchParams.get('oauth1')
     const platform = searchParams.get('platform')
     const error = searchParams.get('error')
+    const code = searchParams.get('code')  // Google Drive OAuth callback
+    
+    // Handle Google Drive OAuth callback
+    if (code && !success && !error) {
+      const redirectUri = `${window.location.origin}/dashboard/integrations`
+      apiClient.connectGoogleDrive(code, redirectUri)
+        .then(() => {
+          toast({
+            title: "Success",
+            description: "Google Drive connected successfully!",
+          })
+          // Clear URL parameters
+          window.history.replaceState({}, '', window.location.pathname)
+          if (selectedAssistant) {
+            loadStatuses()
+          }
+        })
+        .catch((err) => {
+          toast({
+            title: "Error",
+            description: err.message || "Failed to connect Google Drive",
+            variant: "destructive",
+          })
+          window.history.replaceState({}, '', window.location.pathname)
+        })
+      return  // Exit early, we're handling this
+    }
     
     // Handle OAuth 1.0 Twitter callback
     if (success === 'true' && oauth1 === 'complete' && platform === 'twitter') {
@@ -419,6 +455,14 @@ export default function IntegrationsPage() {
 
   async function handleConnect(platform: string) {
     try {
+      // Special handling for Google Drive - uses separate OAuth flow
+      if (platform === 'google_drive') {
+        const redirectUri = `${window.location.origin}/dashboard/integrations`
+        const response = await apiClient.getGoogleDriveAuthUrl(redirectUri)
+        globalThis.window.location.href = response.auth_url
+        return
+      }
+      
       const url = await apiClient.getOAuthInitUrl(platform, selectedAssistant)
       globalThis.window.location.href = url
     } catch (error: unknown) {

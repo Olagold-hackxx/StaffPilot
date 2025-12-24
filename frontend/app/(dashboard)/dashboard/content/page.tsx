@@ -25,6 +25,7 @@ type Capability = ApiCapability & {
   integrations_required?: string[]
 }
 
+
 interface PublishedPost {
   id: string
   platform: string
@@ -101,6 +102,7 @@ export default function ContentPage() {
   const [searchQuery, setSearchQuery] = useState("")
   const [platformFilter, setPlatformFilter] = useState<string>("all")
   const [statusFilter, setStatusFilter] = useState<string>("all")
+
 
   useEffect(() => {
     loadData()
@@ -183,6 +185,7 @@ export default function ContentPage() {
       setLoading(false)
     }
   }
+
 
   async function handleCreateContent() {
     if (!capability || !request.trim()) return
@@ -890,7 +893,9 @@ export default function ContentPage() {
       </div>
           )}
         </TabsContent>
-      </Tabs>
+
+        {/* Assets Tab */}
+        </Tabs>
 
       {/* Create Content Dialog */}
       <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>

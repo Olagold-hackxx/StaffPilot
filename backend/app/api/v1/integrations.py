@@ -588,6 +588,37 @@ async def google_unified_callback(
     user_id = UUID(state_data["user_id"])
     assistant_id = UUID(state_data["assistant_id"]) if state_data.get("assistant_id") else None
     
+    # Handle Google Drive separately - stores tokens directly on tenant
+    if platform == "google_drive":
+        try:
+            from app.services.integrations.storage.google_drive import create_google_drive_service
+            from sqlalchemy import select
+            from app.models.tenant import Tenant
+            
+            drive_service = create_google_drive_service(str(tenant_id))
+            google_redirect_uri = f"{backend_url}/api/v1/integrations/oauth/google/callback"
+            tokens = drive_service.exchange_code(code=code, redirect_uri=google_redirect_uri)
+            
+            # Store tokens in tenant
+            result = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
+            tenant = result.scalar_one_or_none()
+            if tenant:
+                tenant.google_drive_tokens = tokens
+                await db.commit()
+                logger.info(f"Google Drive connected for tenant {tenant_id}")
+            
+            # Clean up state
+            redis_client.delete(f"oauth_state_{state}")
+            
+            return RedirectResponse(
+                url=f"{frontend_url}/dashboard/integrations?success=true&platform=google_drive"
+            )
+        except Exception as e:
+            logger.error(f"Error connecting Google Drive: {e}", exc_info=True)
+            return RedirectResponse(
+                url=f"{frontend_url}/dashboard/integrations?success=false&error={str(e)[:100]}"
+            )
+    
     if platform not in ["google_ads", "google_analytics", "youtube"]:
         logger.error(f"Google callback received for non-Google platform: {platform}")
         return RedirectResponse(

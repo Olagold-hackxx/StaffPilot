@@ -94,7 +94,7 @@ def _generate_image_prompt(
         Formatted image prompt string
     """
     # Format: "Generate a suitable image to post along with below content in [platform] -- [content]"
-    image_prompt = f"Generate a suitable image to post along with below content in {platform} -- {content}"
+    image_prompt = f"Generate a suitable image to post along with below content in {platform} -- {content}. IMPORTANT: Ensure all text in the image is in English and free of spelling mistakes."
     return image_prompt
 
 
@@ -120,33 +120,124 @@ def _generate_video_prompt(
         "Create a short, cinematic, story-driven ad for "
         f"{platform}. Base it on this post so the visuals and narrative stay aligned. "
         "Open with a strong hook, build intrigue, and end on a cliffhanger that makes viewers want to know what happens next. "
-        f"Here is the post to align with: {content}"
+        f"Here is the post to align with: {content}\n\n"
+        "IMPORTANT: Ensure all text in the video is in English and free of spelling mistakes."
     )
     return video_prompt
+
+
+def _fetch_brand_asset_bytes(tenant_id: str, limit: int = 5) -> List[bytes]:
+    """
+    Fetch brand asset image bytes for a tenant.
+    Used to provide reference images for AI generation.
+    
+    Args:
+        tenant_id: Tenant UUID string
+        limit: Maximum number of assets to fetch (default 5)
+    
+    Returns:
+        List of image bytes
+    """
+    from app.db.session import create_worker_session_factory
+    from app.models.brand_asset import BrandAsset
+    from app.services.storage import get_storage
+    from sqlalchemy import select
+    import httpx
+    
+    SessionFactory = create_worker_session_factory()
+    db = SessionFactory()
+    
+    try:
+        # Fetch image-type brand assets for this tenant
+        result = db.execute(
+            select(BrandAsset)
+            .where(BrandAsset.tenant_id == UUID(tenant_id))
+            .where(BrandAsset.asset_type == "image")
+            .order_by(BrandAsset.usage_count.desc())  # Prioritize frequently used assets
+            .limit(limit)
+        )
+        assets = result.scalars().all()
+        
+        if not assets:
+            logger.info(f"No brand assets found for tenant {tenant_id}")
+            return []
+        
+        logger.info(f"Found {len(assets)} brand assets for tenant {tenant_id}")
+        
+        # Download image bytes from storage
+        asset_bytes = []
+        for asset in assets:
+            try:
+                if asset.url:
+                    # Download from URL using httpx (sync)
+                    with httpx.Client(timeout=30.0) as client:
+                        response = client.get(asset.url)
+                        if response.status_code == 200:
+                            asset_bytes.append(response.content)
+                            logger.info(f"Fetched brand asset: {asset.name} ({len(response.content)} bytes)")
+                            
+                            # Update usage count
+                            asset.usage_count = (asset.usage_count or 0) + 1
+            except Exception as e:
+                logger.warning(f"Failed to fetch brand asset {asset.id}: {e}")
+                continue
+        
+        db.commit()
+        return asset_bytes
+        
+    except Exception as e:
+        logger.error(f"Error fetching brand assets: {e}")
+        return []
+    finally:
+        db.close()
 
 
 async def _generate_image_async(
     prompt: str,
     aspect_ratio: str = "1:1",
-    number_of_images: int = 1
+    number_of_images: int = 1,
+    tenant_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Async helper function to generate images using AI.
-    Can be called directly from async contexts.
+    Automatically uses brand assets as reference images if tenant_id is provided.
+    
+    Args:
+        prompt: Text prompt for image generation
+        aspect_ratio: Image aspect ratio
+        number_of_images: Number of images to generate
+        tenant_id: Optional tenant ID to fetch brand assets for references
+    
+    Returns:
+        Dict with success, images, and count
     """
     from app.services.llm.factory import create_llm_service
     
     llm_service = create_llm_service()
+    
+    # Fetch brand assets for reference images if tenant_id provided
+    reference_images = []
+    if tenant_id:
+        reference_images = _fetch_brand_asset_bytes(tenant_id, limit=5)
+        if reference_images:
+            logger.info(f"Using {len(reference_images)} brand assets as reference images for generation")
+    
+    # Generate images with references if available
+    # The updated GeminiService.generate_image supports reference_images
     images = await llm_service.generate_image(
         prompt=prompt,
         aspect_ratio=aspect_ratio,
-        number_of_images=number_of_images
+        number_of_images=number_of_images,
+        reference_images=reference_images if reference_images else None
     )
+    
     return {
         "success": True,
         "images": images if isinstance(images, list) else [images] if images else [],
-        "count": len(images) if isinstance(images, list) else (1 if images else 0)
+        "count": len(images) if isinstance(images, list) else (1 if images else 0),
+        "used_references": len(reference_images)
     }
+
 
 
 async def _upload_media_async(
@@ -248,11 +339,12 @@ async def _upload_media_async(
 
 async def _generate_video_async(
     prompt: str,
-    duration_seconds: int = 30
+    duration_seconds: int = 30,
+    tenant_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Async helper function to generate video using AI.
-    Can be called directly from async contexts.
+    Automatically uses brand assets as reference images if tenant_id is provided.
     Note: Uses sync method internally for better Celery compatibility.
     """
     try:
@@ -260,8 +352,21 @@ async def _generate_video_async(
         
         llm_service = create_llm_service()
         
-        # Use sync method for better Celery compatibility
-        if hasattr(llm_service, 'generate_video_sync'):
+        # Fetch brand assets for reference images if tenant_id provided
+        reference_images = []
+        if tenant_id:
+            reference_images = _fetch_brand_asset_bytes(tenant_id, limit=3)
+            if reference_images:
+                logger.info(f"Using {len(reference_images)} brand assets as reference images for video generation")
+        
+        # Use sync method with references for better Celery compatibility
+        if reference_images and hasattr(llm_service, 'generate_video_with_references_sync'):
+            video = llm_service.generate_video_with_references_sync(
+                prompt=prompt,
+                reference_images=reference_images,
+                aspect_ratio="16:9"
+            )
+        elif hasattr(llm_service, 'generate_video_sync'):
             video = llm_service.generate_video_sync(
                 prompt=prompt,
                 duration_seconds=duration_seconds
@@ -275,7 +380,8 @@ async def _generate_video_async(
         
         return {
             "success": True,
-            "video": video
+            "video": video,
+            "used_references": len(reference_images)
         }
     except Exception as e:
         logger.error(f"Video generation failed: {str(e)}")
@@ -537,6 +643,172 @@ def generate_video_task(
     
     except Exception as e:
         logger.error(f"Video generation failed: {str(e)}")
+        raise self.retry(exc=e, countdown=120)
+
+
+@celery_app.task(name="content.generate_video_with_assets", bind=True, max_retries=1, time_limit=1800)
+def generate_video_with_assets_task(
+    self,
+    tenant_id: str,
+    prompt: str,
+    target_duration: int = 15,
+    brand_asset_ids: list = None,
+    user_id: str = None
+) -> Dict[str, Any]:
+    """
+    Generate video for content using brand assets as reference images.
+    Supports video extension to reach target duration (up to 60 seconds).
+    
+    Args:
+        tenant_id: Tenant UUID string
+        prompt: Video generation prompt
+        target_duration: Target video duration in seconds (8-60)
+        brand_asset_ids: Optional list of brand asset UUIDs to use as references
+    
+    Returns:
+        Dict with video URL and generation details
+    """
+    try:
+        logger.info(f"=== CONTENT VIDEO GENERATION WITH ASSETS STARTED ===")
+        logger.info(f"Tenant: {tenant_id}, Duration: {target_duration}s, Assets: {len(brand_asset_ids or [])}")
+        
+        from app.db.session import create_worker_session_factory
+        from app.models.brand_asset import BrandAsset
+        from app.services.llm.factory import create_llm_service
+        from app.services.storage import get_storage
+        from sqlalchemy import select
+        from io import BytesIO
+        import uuid as uuid_lib
+        import requests
+        
+        SessionFactory = create_worker_session_factory()
+        db = SessionFactory()
+        
+        try:
+            # Fetch brand assets if provided
+            reference_images = []
+            if brand_asset_ids:
+                for asset_id in brand_asset_ids:
+                    try:
+                        asset_result = db.execute(
+                            select(BrandAsset).where(
+                                BrandAsset.id == UUID(asset_id),
+                                BrandAsset.tenant_id == UUID(tenant_id),
+                                BrandAsset.is_active == True,
+                                BrandAsset.asset_type == "image"
+                            )
+                        )
+                        asset = asset_result.scalar_one_or_none()
+                        
+                        if asset and asset.url:
+                            logger.info(f"Fetching brand asset {asset_id}: {asset.name}")
+                            try:
+                                response = requests.get(asset.url, timeout=30)
+                                if response.status_code == 200:
+                                    reference_images.append(response.content)
+                                    logger.info(f"Loaded brand asset: {asset.name} ({len(response.content)} bytes)")
+                                    
+                                    # Update usage count
+                                    asset.usage_count = (asset.usage_count or 0) + 1
+                                    from datetime import datetime, timezone
+                                    asset.last_used_at = datetime.now(timezone.utc)
+                                else:
+                                    logger.warning(f"Failed to fetch asset {asset_id}: HTTP {response.status_code}")
+                            except Exception as fetch_err:
+                                logger.warning(f"Failed to fetch asset {asset_id}: {fetch_err}")
+                    except Exception as asset_err:
+                        logger.warning(f"Failed to load brand asset {asset_id}: {asset_err}")
+            
+            logger.info(f"Loaded {len(reference_images)} reference images")
+            
+            # Generate video
+            llm_service = create_llm_service()
+            video_url = None
+            
+            try:
+                # Add strict English instruction to prompt
+                prompt += ". IMPORTANT: Ensure all text in the video is in English and free of spelling errors."
+                
+                logger.info(f"Generating {target_duration}s video with {len(reference_images)} references...")
+                
+                # Use extended video generation with references
+                if hasattr(llm_service, 'generate_extended_video_sync'):
+                    video_data = llm_service.generate_extended_video_sync(
+                        prompt=prompt,
+                        target_duration_seconds=target_duration,
+                        reference_images=reference_images if reference_images else None,
+                        aspect_ratio="16:9"
+                    )
+                elif reference_images and hasattr(llm_service, 'generate_video_with_references_sync'):
+                    video_data = llm_service.generate_video_with_references_sync(
+                        prompt=prompt,
+                        reference_images=reference_images,
+                        aspect_ratio="16:9"
+                    )
+                else:
+                    video_data = llm_service.generate_video_sync(
+                        prompt=prompt,
+                        duration_seconds=target_duration,
+                        aspect_ratio="16:9"
+                    )
+                
+                if video_data:
+                    storage = get_storage()
+                    video_bytes = BytesIO()
+                    if isinstance(video_data, bytes):
+                        video_bytes.write(video_data)
+                    else:
+                        video_bytes.write(bytes(video_data))
+                    
+                    video_bytes.seek(0)
+                    storage_key = f"tenants/{tenant_id}/content/videos/{uuid_lib.uuid4()}.mp4"
+                    
+                    url = storage.upload_sync(
+                        key=storage_key,
+                        file=video_bytes,
+                        content_type="video/mp4"
+                    )
+                    video_url = url
+                    logger.info(f"Uploaded video to: {url}")
+                    
+                    # Create BrandAsset record for the generated video
+                    from datetime import datetime
+                    
+                    video_name = f"Generated Video {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+                    new_asset = BrandAsset(
+                        tenant_id=UUID(tenant_id),
+                        name=video_name,
+                        description=f"AI Generated video from prompt: {prompt[:50]}...",
+                        asset_type="video",
+                        source="generated",
+                        url=video_url,
+                        duration=target_duration,
+                        created_by=UUID(user_id) if user_id else None,
+                        is_active=True
+                    )
+                    db.add(new_asset)
+                    logger.info(f"Created BrandAsset for generated video: {video_name}")
+                    
+            except Exception as e:
+                logger.error(f"Video generation with assets failed: {e}")
+                raise
+            
+            db.commit()
+            
+            logger.info(f"=== CONTENT VIDEO GENERATION COMPLETED ===")
+            
+            return {
+                "success": True,
+                "video_url": video_url,
+                "target_duration": target_duration,
+                "reference_count": len(reference_images)
+            }
+            
+        finally:
+            db.close()
+            
+    except Exception as e:
+        logger.error(f"Content video generation with assets failed: {str(e)}", exc_info=True)
         raise self.retry(exc=e, countdown=120)
 
 
@@ -1191,11 +1463,13 @@ def execute_content_creation(
                         logger.info(f"[TASK 4/6] Generated image prompt: {image_prompt[:200]}...")
                         
                         # Image generation is async (uses LLM), so use asyncio.run()
+                        # Pass tenant_id to auto-use brand assets as reference images
                         image_result = asyncio.run(
                             _generate_image_async(
                                 prompt=image_prompt,
                                 aspect_ratio="1:1",
-                                number_of_images=1
+                                number_of_images=1,
+                                tenant_id=tenant_id  # Auto-fetch and use brand assets
                             )
                         )
                         
@@ -1260,11 +1534,12 @@ def execute_content_creation(
                         
                         logger.info(f"[TASK 4/6] Generated video prompt: {video_prompt[:200]}...")
                         
-                        # Video generation is async (uses LLM), so use asyncio.run()
+                        # Video generation with auto brand asset references
                         video_result = asyncio.run(
                             _generate_video_async(
                                 prompt=video_prompt,
-                                duration_seconds=30
+                                duration_seconds=30,
+                                tenant_id=tenant_id  # Auto-fetch and use brand assets
                             )
                         )
                         

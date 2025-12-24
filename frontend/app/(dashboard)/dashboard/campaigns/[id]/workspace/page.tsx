@@ -64,6 +64,20 @@ interface ChatMessage {
   timestamp: Date
 }
 
+interface BrandAsset {
+  id: string
+  name: string
+  description?: string
+  asset_type: string
+  source: string
+  url: string
+  thumbnail_url?: string
+  file_name?: string
+  file_size?: number
+  usage_count: number
+  created_at: string
+}
+
 // Ad Strength Component
 function AdStrengthIndicator({ strength }: { strength: string }) {
   const getStrengthConfig = (s: string) => {
@@ -135,6 +149,12 @@ export default function CampaignWorkspacePage() {
   
   // YouTube connection state
   const [youtubeConnected, setYoutubeConnected] = useState(false)
+  
+  // Brand Assets state
+  const [brandAssets, setBrandAssets] = useState<BrandAsset[]>([])
+  const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([])
+  const [videoDuration, setVideoDuration] = useState(15)
+  const [uploadingAsset, setUploadingAsset] = useState(false)
 
   const loadCampaign = useCallback(async () => {
     try {
@@ -173,6 +193,20 @@ export default function CampaignWorkspacePage() {
     }
     checkYoutubeStatus()
   }, [])
+
+  // Load brand assets
+  useEffect(() => {
+    async function loadBrandAssets() {
+      if (!campaign) return
+      try {
+        const response = await apiClient.listBrandAssets(campaign.id)
+        setBrandAssets(response.assets || [])
+      } catch (error) {
+        // Silently fail - not critical
+      }
+    }
+    loadBrandAssets()
+  }, [campaign?.id])
 
   // Calculate ad strength based on assets
   const calculateAdStrength = useCallback(() => {
@@ -484,7 +518,10 @@ export default function CampaignWorkspacePage() {
     
     setGeneratingVideo(true)
     try {
-      const response = await apiClient.generateVideosAsync(campaign.id, 15)
+      // Use new API with brand assets if any are selected
+      const response = selectedAssetIds.length > 0 
+        ? await apiClient.generateVideosWithAssetsAsync(campaign.id, videoDuration, selectedAssetIds)
+        : await apiClient.generateVideosAsync(campaign.id, videoDuration)
       
       toast({
         title: "Generating Video",
@@ -516,6 +553,56 @@ export default function CampaignWorkspacePage() {
       })
       setGeneratingVideo(false)
     }
+  }
+
+  // Upload brand asset
+  const handleAssetUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || !campaign) return
+    
+    setUploadingAsset(true)
+    try {
+      const asset = await apiClient.uploadBrandAsset(campaign.id, file, file.name)
+      setBrandAssets(prev => [asset, ...prev])
+      toast({
+        title: "Asset Uploaded",
+        description: `${file.name} added to brand assets`,
+      })
+    } catch (error: any) {
+      toast({
+        title: "Upload Failed",
+        description: error.message || "Failed to upload asset",
+        variant: "destructive",
+      })
+    } finally {
+      setUploadingAsset(false)
+    }
+  }
+
+  // Delete brand asset
+  const deleteBrandAsset = async (assetId: string) => {
+    if (!campaign) return
+    try {
+      await apiClient.deleteBrandAsset(campaign.id, assetId)
+      setBrandAssets(prev => prev.filter(a => a.id !== assetId))
+      setSelectedAssetIds(prev => prev.filter(id => id !== assetId))
+      toast({ title: "Asset Deleted" })
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to delete asset",
+        variant: "destructive",
+      })
+    }
+  }
+
+  // Toggle asset selection for video generation
+  const toggleAssetSelection = (assetId: string) => {
+    setSelectedAssetIds(prev => 
+      prev.includes(assetId) 
+        ? prev.filter(id => id !== assetId)
+        : [...prev, assetId]
+    )
   }
 
   // AI Chat
@@ -867,6 +954,92 @@ export default function CampaignWorkspacePage() {
             </CardContent>
           </Card>
           
+          {/* Brand Assets */}
+          <Card className="flex-shrink-0">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm flex items-center justify-between">
+                <span className="flex items-center gap-2">
+                  <ImageIcon className="h-4 w-4" />
+                  Brand Assets
+                </span>
+                <div className="relative">
+                  <input
+                    type="file"
+                    accept="image/*,video/*"
+                    onChange={handleAssetUpload}
+                    className="absolute inset-0 opacity-0 cursor-pointer"
+                    disabled={uploadingAsset}
+                  />
+                  <Button size="sm" variant="outline" className="h-7 text-xs" disabled={uploadingAsset}>
+                    {uploadingAsset ? (
+                      <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                    ) : (
+                      <Plus className="h-3 w-3 mr-1" />
+                    )}
+                    Upload
+                  </Button>
+                </div>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {brandAssets.length > 0 ? (
+                <div className="grid grid-cols-3 gap-2">
+                  {brandAssets.filter(a => a.asset_type === "image").map((asset) => (
+                    <div 
+                      key={asset.id} 
+                      className={cn(
+                        "relative group rounded-lg border-2 overflow-hidden cursor-pointer transition-all",
+                        selectedAssetIds.includes(asset.id) 
+                          ? "border-primary ring-2 ring-primary/20" 
+                          : "border-transparent hover:border-muted-foreground/30"
+                      )}
+                      onClick={() => toggleAssetSelection(asset.id)}
+                    >
+                      <img 
+                        src={asset.url} 
+                        alt={asset.name} 
+                        className="w-full h-16 object-cover"
+                      />
+                      {selectedAssetIds.includes(asset.id) && (
+                        <div className="absolute top-1 right-1 h-4 w-4 bg-primary rounded-full flex items-center justify-center">
+                          <CheckCircle2 className="h-3 w-3 text-primary-foreground" />
+                        </div>
+                      )}
+                      <Button
+                        variant="destructive"
+                        size="icon"
+                        className="absolute bottom-1 right-1 h-5 w-5 opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          deleteBrandAsset(asset.id)
+                        }}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="flex items-center gap-4 p-3 border border-dashed rounded-lg">
+                  <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center">
+                    <ImageIcon className="h-5 w-5 text-muted-foreground" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-medium">Upload brand assets</p>
+                    <p className="text-xs text-muted-foreground">
+                      Images will be used as references for video generation
+                    </p>
+                  </div>
+                </div>
+              )}
+              {selectedAssetIds.length > 0 && (
+                <p className="text-xs text-muted-foreground mt-2">
+                  {selectedAssetIds.length} asset{selectedAssetIds.length > 1 ? 's' : ''} selected for video generation
+                </p>
+              )}
+            </CardContent>
+          </Card>
+          
           {/* Videos */}
           <Card className="flex-shrink-0">
             <CardHeader className="pb-3">
@@ -915,7 +1088,31 @@ export default function CampaignWorkspacePage() {
                 </div>
               </CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-3">
+              {/* Video Duration Selector */}
+              <div className="flex items-center gap-3 p-2 bg-muted/50 rounded-lg">
+                <span className="text-xs font-medium">Duration:</span>
+                <select 
+                  value={videoDuration} 
+                  onChange={(e) => setVideoDuration(Number(e.target.value))}
+                  className="text-xs h-6 px-2 rounded border bg-background"
+                >
+                  <option value={8}>8 seconds</option>
+                  <option value={16}>16 seconds</option>
+                  <option value={24}>24 seconds</option>
+                  <option value={32}>32 seconds</option>
+                  <option value={40}>40 seconds</option>
+                  <option value={48}>48 seconds</option>
+                  <option value={56}>56 seconds</option>
+                  <option value={60}>60 seconds</option>
+                </select>
+                {selectedAssetIds.length > 0 && (
+                  <span className="text-xs text-primary">
+                    + {selectedAssetIds.length} reference{selectedAssetIds.length > 1 ? 's' : ''}
+                  </span>
+                )}
+              </div>
+              
               {videos.length > 0 ? (
                 <div className="grid gap-3">
                   {videos.map((vid) => (

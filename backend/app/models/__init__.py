@@ -13,6 +13,7 @@ from app.models.agent_execution import AgentExecution
 from app.models.content import ContentItem, ScheduledPost
 from app.models.campaign import Campaign, CampaignAsset, CampaignContext, ChatTranscript, CreativeRequest
 from app.models.analytics import AnalyticsReport
+from app.models.brand_asset import BrandAsset
 
 __all__ = [
     "Tenant",
@@ -34,5 +35,7 @@ __all__ = [
     "ChatTranscript",
     "CreativeRequest",
     "AnalyticsReport",
+    "BrandAsset",
 ]
+
 

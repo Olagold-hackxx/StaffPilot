@@ -261,7 +261,8 @@ Return your response as valid JSON only. Do not include any markdown formatting 
     self,
     prompt: str,
     aspect_ratio: str = "1:1",
-    number_of_images: int = 1
+    number_of_images: int = 1,
+    reference_images: Optional[List[bytes]] = None
 ) -> List[bytes]:
         """
         Generate images using Imagen model via the new google.genai API.
@@ -270,23 +271,53 @@ Return your response as valid JSON only. Do not include any markdown formatting 
             prompt: Text prompt for image generation
             aspect_ratio: Image aspect ratio (e.g., "1:1", "16:9", "9:16")
             number_of_images: Number of images to generate
+            reference_images: Optional list of image bytes to use as references
         
         Returns:
             List of image data as bytes (decoded, ready to use)
         """
         try:
             import base64
+            from google.genai import types
             
             model_name = self.image_model_name or "gemini-2.5-flash-image"
             logger.info(f"Generating {number_of_images} image(s) with {model_name}, prompt: {prompt[:100]}...")
+            
+            if reference_images:
+                logger.info(f"Using {len(reference_images)} reference images for generation")
             
             images = []
             
             for _ in range(number_of_images):
                 def _generate():
+                    # Build contents with reference images if provided
+                    contents = []
+                    
+                    # Add reference images first
+                    if reference_images:
+                        for i, img_bytes in enumerate(reference_images[:3]):  # Max 3 references
+                            # Detect mime type
+                            mime_type = "image/jpeg"
+                            if img_bytes[:8] == b'\x89PNG\r\n\x1a\n':
+                                mime_type = "image/png"
+                            elif img_bytes[:2] == b'\xff\xd8':
+                                mime_type = "image/jpeg"
+                            
+                            contents.append(types.Part.from_bytes(
+                                data=img_bytes,
+                                mime_type=mime_type
+                            ))
+                            logger.info(f"Added reference image {i+1} ({mime_type}, {len(img_bytes)} bytes)")
+                    
+                    # Add text prompt
+                    if reference_images:
+                        contents.append(f"Using the reference images above as style inspiration, generate: {prompt}")
+                    else:
+                        contents.append(prompt)
+                    
                     response = self.genai_client.models.generate_content(
                         model=model_name,
-                        contents=[prompt]
+                        contents=contents
                     )
                     return response
                 
@@ -437,7 +468,8 @@ Return your response as valid JSON only. Do not include any markdown formatting 
         self,
         prompt: str,
         aspect_ratio: str = "1:1",
-        number_of_images: int = 1
+        number_of_images: int = 1,
+        reference_images: Optional[List[bytes]] = None
     ) -> List[bytes]:
         """
         Generate images synchronously - for Celery workers.
@@ -446,12 +478,14 @@ Return your response as valid JSON only. Do not include any markdown formatting 
             prompt: Text prompt for image generation
             aspect_ratio: Image aspect ratio (e.g., "1:1", "16:9", "9:16")
             number_of_images: Number of images to generate
+            reference_images: Optional list of image bytes to use as references
         
         Returns:
             List of image data as bytes (decoded, ready to use)
         """
         try:
             import base64
+            from google.genai import types
             
             model_name = self.image_model_name or "gemini-2.5-flash-image"
             logger.info(f"[SYNC] Generating {number_of_images} image(s) with {model_name}")
@@ -459,10 +493,34 @@ Return your response as valid JSON only. Do not include any markdown formatting 
             images = []
             
             for _ in range(number_of_images):
+                # Build contents with reference images if provided
+                contents = []
+                
+                # Add reference images first
+                if reference_images:
+                    for i, img_bytes in enumerate(reference_images[:3]):  # Max 3 references
+                        # Detect mime type
+                        mime_type = "image/jpeg"
+                        if img_bytes[:8] == b'\x89PNG\r\n\x1a\n':
+                            mime_type = "image/png"
+                        elif img_bytes[:2] == b'\xff\xd8':
+                            mime_type = "image/jpeg"
+                        
+                        contents.append(types.Part.from_bytes(
+                            data=img_bytes,
+                            mime_type=mime_type
+                        ))
+                
+                # Add text prompt
+                if reference_images:
+                    contents.append(f"Using the reference images above as style inspiration, generate: {prompt}")
+                else:
+                    contents.append(prompt)
+
                 # Call API directly (synchronous)
                 response = self.genai_client.models.generate_content(
                     model=model_name,
-                    contents=[prompt]
+                    contents=contents
                 )
                 
                 # Process response parts
@@ -722,6 +780,334 @@ Return your response as valid JSON only. Do not include any markdown formatting 
         except Exception as e:
             logger.error(f"[SYNC] Video generation failed: {str(e)}", exc_info=True)
             raise Exception(f"Video generation failed: {str(e)}")
+    
+    def generate_video_with_references_sync(
+        self,
+        prompt: str,
+        reference_images: List[bytes],
+        aspect_ratio: str = "16:9"
+    ) -> bytes:
+        """
+        Generate video with reference images synchronously - for Celery workers.
+        Uses Veo's reference image feature to incorporate brand assets.
+        
+        Args:
+            prompt: Text prompt for video generation
+            reference_images: List of image data as bytes to use as references
+            aspect_ratio: Video aspect ratio
+        
+        Returns:
+            Video data as bytes (MP4 format)
+        """
+        try:
+            import time
+            
+            model_name = self.video_model_name or "veo-3.1-generate-preview"
+            logger.info(f"[SYNC] Generating video with {len(reference_images)} reference images")
+            
+            # Check if video generation is available
+            if not hasattr(self.genai_client.models, 'generate_videos'):
+                raise Exception("Video generation (generate_videos) not available")
+            
+            # Build reference image objects using VideoGenerationReferenceImage
+            reference_image_objects = []
+            for i, img_bytes in enumerate(reference_images[:3]):  # Max 3 reference images for Veo 3.1
+                try:
+                    # Check if types module is available
+                    if types is None:
+                        logger.warning("google.genai.types not available for reference images")
+                        break
+                    
+                    # Detect mime type
+                    mime_type = "image/jpeg"
+                    if img_bytes[:4] == b'\x89PNG':
+                        mime_type = "image/png"
+                    elif img_bytes[:4] == b'GIF8':
+                        mime_type = "image/gif"
+                    elif img_bytes[:4] == b'RIFF':
+                        mime_type = "image/webp"
+                    
+                    # Create types.Image with image_bytes and mime_type
+                    image_obj = types.Image(
+                        image_bytes=img_bytes,
+                        mime_type=mime_type
+                    )
+                    
+                    # Create VideoGenerationReferenceImage with types.Image
+                    ref_image = types.VideoGenerationReferenceImage(
+                        image=image_obj,
+                        reference_type="asset"
+                    )
+                    reference_image_objects.append(ref_image)
+                    logger.info(f"[SYNC] Added reference image {i+1} ({len(img_bytes)} bytes, {mime_type})")
+                except Exception as e:
+                    logger.warning(f"[SYNC] Failed to create reference image {i+1}: {e}")
+            
+            # Build config with reference images
+            config = None
+            if reference_image_objects and types is not None:
+                config = types.GenerateVideosConfig(
+                    reference_images=reference_image_objects,
+                    aspect_ratio=aspect_ratio
+                )
+            
+            # Start video generation
+            if config:
+                operation = self.genai_client.models.generate_videos(
+                    model=model_name,
+                    prompt=prompt,
+                    config=config
+                )
+            else:
+                operation = self.genai_client.models.generate_videos(
+                    model=model_name,
+                    prompt=prompt,
+                    config=types.GenerateVideosConfig(aspect_ratio=aspect_ratio) if types else None
+                )
+            
+            operation_name = operation.name if hasattr(operation, 'name') else str(operation)
+            logger.info(f"[SYNC] Video generation with references started: {operation_name}")
+            
+            # Poll the operation status
+            max_wait_time = 600
+            wait_interval = 10
+            elapsed_time = 0
+            
+            while not operation.done:
+                if elapsed_time >= max_wait_time:
+                    raise Exception(f"Video generation timed out after {max_wait_time} seconds")
+                
+                logger.info(f"[SYNC] Waiting for video... (elapsed: {elapsed_time}s)")
+                time.sleep(wait_interval)
+                elapsed_time += wait_interval
+                
+                if hasattr(self.genai_client, 'operations') and hasattr(self.genai_client.operations, 'get'):
+                    operation = self.genai_client.operations.get(operation)
+            
+            logger.info("[SYNC] Video generation with references completed!")
+            
+            # Check for errors
+            if hasattr(operation, 'error') and operation.error:
+                raise Exception(f"Video generation failed: {operation.error}")
+            
+            # Get video data
+            if not hasattr(operation, 'response') or not operation.response:
+                raise Exception("No response found after completion")
+            
+            if not hasattr(operation.response, 'generated_videos') or not operation.response.generated_videos:
+                logger.error(f"[SYNC] No videos found in response. Operation metadata: {operation.metadata if hasattr(operation, 'metadata') else 'N/A'}")
+                raise Exception("No videos found in response")
+            
+            generated_video = operation.response.generated_videos[0]
+            
+            if not hasattr(generated_video, 'video') or not generated_video.video:
+                raise Exception("No video file available")
+            
+            # Download the video file
+            video_file = self.genai_client.files.download(file=generated_video.video)
+            
+            # Read video data
+            if hasattr(video_file, 'read'):
+                video_data = video_file.read()
+            elif hasattr(video_file, 'getvalue'):
+                video_data = video_file.getvalue()
+            elif isinstance(video_file, bytes):
+                video_data = video_file
+            else:
+                video_data = getattr(video_file, 'content', None)
+                if not video_data:
+                    raise Exception(f"Unable to extract video data from: {type(video_file)}")
+            
+            if not video_data:
+                raise Exception("Downloaded video file is empty")
+            
+            logger.info(f"[SYNC] Video with references generated successfully ({len(video_data)} bytes)")
+            return video_data
+            
+        except Exception as e:
+            logger.error(f"[SYNC] Video generation with references failed: {str(e)}", exc_info=True)
+            raise Exception(f"Video generation with references failed: {str(e)}")
+    
+    def extend_video_sync(
+        self,
+        video_data: bytes,
+        prompt: str
+    ) -> bytes:
+        """
+        Extend an existing video by approximately 8 seconds synchronously.
+        Uses Veo's video extension feature.
+        
+        Args:
+            video_data: The video bytes to extend (from previous generation)
+            prompt: Text prompt describing what should happen in the extension
+        
+        Returns:
+            Extended video data as bytes (MP4 format)
+        """
+        try:
+            import time
+            from io import BytesIO
+            
+            from google.genai import types
+            
+            model_name = self.video_model_name or "veo-3.1-generate-preview"
+            logger.info(f"[SYNC] Extending video ({len(video_data)} bytes)")
+            
+            # Upload the video to get a file reference
+            # The Veo API expects a file object for extension
+            video_buffer = BytesIO(video_data)
+            
+            # Upload the video file first
+            uploaded_file = self.genai_client.files.upload(
+                file=video_buffer,
+                config={"mime_type": "video/mp4"}
+            )
+            
+            logger.info(f"[SYNC] Uploaded video for extension: {uploaded_file.name if hasattr(uploaded_file, 'name') else 'unknown'}")
+            
+            # Start video extension - use empty config to ensure defaults
+            # The 'encoding' error suggests the SDK might be injecting disallowed params if config is missing or inferred
+            # Explicitly providing an empty config might help
+            
+            if types:
+                config = types.GenerateVideosConfig()
+            else:
+                config = None
+
+            operation = self.genai_client.models.generate_videos(
+                model=model_name,
+                video=uploaded_file,
+                prompt=prompt,
+                config=config
+            )
+            
+            operation_name = operation.name if hasattr(operation, 'name') else str(operation)
+            logger.info(f"[SYNC] Video extension operation started: {operation_name}")
+            
+            # Poll the operation status
+            max_wait_time = 600
+            wait_interval = 10
+            elapsed_time = 0
+            
+            while not operation.done:
+                if elapsed_time >= max_wait_time:
+                    raise Exception(f"Video extension timed out after {max_wait_time} seconds")
+                
+                logger.info(f"[SYNC] Waiting for extended video... (elapsed: {elapsed_time}s)")
+                time.sleep(wait_interval)
+                elapsed_time += wait_interval
+                
+                if hasattr(self.genai_client, 'operations') and hasattr(self.genai_client.operations, 'get'):
+                    operation = self.genai_client.operations.get(operation)
+            
+            logger.info("[SYNC] Video extension completed!")
+            
+            # Check for errors
+            if hasattr(operation, 'error') and operation.error:
+                raise Exception(f"Video extension failed: {operation.error}")
+            
+            # Get extended video data
+            if not hasattr(operation, 'response') or not operation.response:
+                raise Exception("No response found after completion")
+            
+            if not hasattr(operation.response, 'generated_videos') or not operation.response.generated_videos:
+                raise Exception("No videos found in response")
+            
+            extended_video = operation.response.generated_videos[0]
+            
+            if not hasattr(extended_video, 'video') or not extended_video.video:
+                raise Exception("No video file available")
+            
+            # Download the extended video
+            video_file = self.genai_client.files.download(file=extended_video.video)
+            
+            # Read video data
+            if hasattr(video_file, 'read'):
+                extended_data = video_file.read()
+            elif hasattr(video_file, 'getvalue'):
+                extended_data = video_file.getvalue()
+            elif isinstance(video_file, bytes):
+                extended_data = video_file
+            else:
+                extended_data = getattr(video_file, 'content', None)
+                if not extended_data:
+                    raise Exception(f"Unable to extract extended video data from: {type(video_file)}")
+            
+            if not extended_data:
+                raise Exception("Downloaded extended video file is empty")
+            
+            logger.info(f"[SYNC] Video extended successfully ({len(extended_data)} bytes)")
+            return extended_data
+            
+        except Exception as e:
+            logger.error(f"[SYNC] Video extension failed: {str(e)}", exc_info=True)
+            raise Exception(f"Video extension failed: {str(e)}")
+    
+    def generate_extended_video_sync(
+        self,
+        prompt: str,
+        target_duration_seconds: int,
+        reference_images: Optional[List[bytes]] = None,
+        aspect_ratio: str = "16:9"
+    ) -> bytes:
+        """
+        Generate a video and extend it to reach the target duration.
+        Each extension adds approximately 8 seconds.
+        
+        Args:
+            prompt: Text prompt for video generation
+            target_duration_seconds: Target video duration (8-60 seconds)
+            reference_images: Optional list of image bytes to use as references
+            aspect_ratio: Video aspect ratio
+        
+        Returns:
+            Final extended video data as bytes (MP4 format)
+        """
+        try:
+            # Clamp duration to valid range
+            target_duration_seconds = max(8, min(60, target_duration_seconds))
+            
+            logger.info(f"[SYNC] Generating extended video: target={target_duration_seconds}s, refs={len(reference_images or [])}")
+            
+            # Generate initial video (approximately 8 seconds)
+            if reference_images and len(reference_images) > 0:
+                video_data = self.generate_video_with_references_sync(
+                    prompt=prompt,
+                    reference_images=reference_images,
+                    aspect_ratio=aspect_ratio
+                )
+            else:
+                video_data = self.generate_video_sync(
+                    prompt=prompt,
+                    duration_seconds=8,
+                    aspect_ratio=aspect_ratio
+                )
+            
+            current_duration = 8
+            extension_count = 0
+            
+            # Extend until we reach target duration
+            while current_duration < target_duration_seconds:
+                extension_count += 1
+                logger.info(f"[SYNC] Extension {extension_count}: current={current_duration}s, target={target_duration_seconds}s")
+                
+                try:
+                    video_data = self.extend_video_sync(
+                        video_data=video_data,
+                        prompt=prompt
+                    )
+                    current_duration += 8
+                except Exception as ext_error:
+                    logger.warning(f"[SYNC] Extension {extension_count} failed: {ext_error}")
+                    # Return what we have so far
+                    break
+            
+            logger.info(f"[SYNC] Extended video complete: {extension_count} extensions, ~{current_duration}s, {len(video_data)} bytes")
+            return video_data
+            
+        except Exception as e:
+            logger.error(f"[SYNC] Extended video generation failed: {str(e)}", exc_info=True)
+            raise Exception(f"Extended video generation failed: {str(e)}")
     
     async def generate_embeddings(
         self,

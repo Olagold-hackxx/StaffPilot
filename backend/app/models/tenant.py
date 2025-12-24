@@ -30,6 +30,9 @@ class Tenant(Base):
     website_url = Column(String(500), nullable=True)  # Website URL for links in content/campaigns
     custom_config = Column(JSON, default={})
     
+    # Google Drive Integration
+    google_drive_tokens = Column(JSON, nullable=True)  # OAuth tokens for Drive access
+    
     # Status
     is_active = Column(Boolean, default=True)
     is_onboarded = Column(Boolean, default=False)
