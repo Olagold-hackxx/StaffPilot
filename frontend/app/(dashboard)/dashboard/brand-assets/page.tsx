@@ -10,7 +10,7 @@ import { useToast } from "@/components/ui/use-toast"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { 
   LayoutGrid, Image, Loader2, Upload, Trash2, CheckCircle2,
-  FileText, FolderOpen, HardDrive, ArrowLeft, Check
+  FileText, FolderOpen, HardDrive, ArrowLeft, Check, Video
 } from "lucide-react"
 
 interface BrandAsset {
