@@ -123,6 +123,7 @@ def _generate_video_prompt(
         "Open with a strong hook, build intrigue, and end on a cliffhanger that makes viewers want to know what happens next. "
         f"Here is the post to align with: {content}\n\n"
         "IMPORTANT: Ensure all text in the video is in English and free of spelling mistakes."
+        "IMPORTANT: Ensure the people in the video speak english and the subtitle corresponds with what they say."
     )
     return video_prompt
 
@@ -787,23 +788,7 @@ def generate_video_with_assets_task(
                     video_url = url
                     logger.info(f"Uploaded video to: {url}")
                     
-                    # Create BrandAsset record for the generated video
-                    from datetime import datetime
-                    
-                    video_name = f"Generated Video {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-                    new_asset = BrandAsset(
-                        tenant_id=UUID(tenant_id),
-                        name=video_name,
-                        description=f"AI Generated video from prompt: {prompt[:50]}...",
-                        asset_type="video",
-                        source="generated",
-                        url=video_url,
-                        duration=target_duration,
-                        created_by=UUID(user_id) if user_id else None,
-                        is_active=True
-                    )
-                    db.add(new_asset)
-                    logger.info(f"Created BrandAsset for generated video: {video_name}")
+
                     
             except Exception as e:
                 logger.error(f"Video generation with assets failed: {e}")
