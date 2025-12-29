@@ -969,16 +969,10 @@ Return your response as valid JSON only. Do not include any markdown formatting 
             # The 'encoding' error suggests the SDK might be injecting disallowed params if config is missing or inferred
             # Explicitly providing an empty config might help
             
-            if types:
-                config = types.GenerateVideosConfig()
-            else:
-                config = None
-
             operation = self.genai_client.models.generate_videos(
                 model=model_name,
                 video=uploaded_file,
-                prompt=prompt,
-                config=config
+                prompt=prompt
             )
             
             operation_name = operation.name if hasattr(operation, 'name') else str(operation)

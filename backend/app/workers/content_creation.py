@@ -123,7 +123,7 @@ def _generate_video_prompt(
         "Open with a strong hook, build intrigue, and end on a cliffhanger that makes viewers want to know what happens next. "
         f"Here is the post to align with: {content}\n\n"
         "IMPORTANT: Ensure all text in the video is in English and free of spelling mistakes."
-        "IMPORTANT: Ensure the people in the video speak english and the subtitle corresponds with what they say."
+        "IMPORTANT: Ensure the people in the video speak english and NO SUBTITLES"
     )
     return video_prompt
 
