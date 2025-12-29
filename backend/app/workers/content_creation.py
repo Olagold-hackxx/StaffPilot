@@ -5,6 +5,7 @@ from app.workers import celery_app
 from app.utils.logger import logger
 from uuid import UUID
 import asyncio
+import random
 from typing import Dict, Any, List, Optional
 
 
@@ -339,7 +340,7 @@ async def _upload_media_async(
 
 async def _generate_video_async(
     prompt: str,
-    duration_seconds: int = 30,
+    duration_seconds: Optional[int] = None,
     tenant_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
@@ -352,6 +353,9 @@ async def _generate_video_async(
         
         llm_service = create_llm_service()
         
+        if duration_seconds is None:
+            duration_seconds = random.randint(24, 60)
+
         # Fetch brand assets for reference images if tenant_id provided
         reference_images = []
         if tenant_id:
@@ -359,8 +363,16 @@ async def _generate_video_async(
             if reference_images:
                 logger.info(f"Using {len(reference_images)} brand assets as reference images for video generation")
         
+        # Use extended video generation with references if available
+        if hasattr(llm_service, 'generate_extended_video_sync'):
+            video = llm_service.generate_extended_video_sync(
+                prompt=prompt,
+                target_duration_seconds=duration_seconds,
+                reference_images=reference_images if reference_images else None,
+                aspect_ratio="16:9"
+            )
         # Use sync method with references for better Celery compatibility
-        if reference_images and hasattr(llm_service, 'generate_video_with_references_sync'):
+        elif reference_images and hasattr(llm_service, 'generate_video_with_references_sync'):
             video = llm_service.generate_video_with_references_sync(
                 prompt=prompt,
                 reference_images=reference_images,
@@ -604,7 +616,7 @@ def generate_image_task(
 def generate_video_task(
     self,
     prompt: str,
-    duration_seconds: int = 30
+    duration_seconds: Optional[int] = None
 ) -> Dict[str, Any]:
     """
     Generate video using AI
@@ -617,9 +629,10 @@ def generate_video_task(
         Dictionary with video data or URL
     """
     try:
-        from app.services.llm.factory import create_llm_service
-        
         llm_service = create_llm_service()
+        
+        if duration_seconds is None:
+            duration_seconds = random.randint(24, 60)
         
         # Use sync method for Celery worker compatibility
         if hasattr(llm_service, 'generate_video_sync'):
@@ -651,7 +664,7 @@ def generate_video_with_assets_task(
     self,
     tenant_id: str,
     prompt: str,
-    target_duration: int = 15,
+    target_duration: Optional[int] = None,
     brand_asset_ids: list = None,
     user_id: str = None
 ) -> Dict[str, Any]:
@@ -669,6 +682,9 @@ def generate_video_with_assets_task(
         Dict with video URL and generation details
     """
     try:
+        if target_duration is None:
+            target_duration = random.randint(24, 60)
+            
         logger.info(f"=== CONTENT VIDEO GENERATION WITH ASSETS STARTED ===")
         logger.info(f"Tenant: {tenant_id}, Duration: {target_duration}s, Assets: {len(brand_asset_ids or [])}")
         
@@ -1538,7 +1554,7 @@ def execute_content_creation(
                         video_result = asyncio.run(
                             _generate_video_async(
                                 prompt=video_prompt,
-                                duration_seconds=30,
+                                duration_seconds=random.randint(24, 60),
                                 tenant_id=tenant_id  # Auto-fetch and use brand assets
                             )
                         )
