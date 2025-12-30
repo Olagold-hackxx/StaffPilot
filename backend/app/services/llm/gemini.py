@@ -895,7 +895,15 @@ Return your response as valid JSON only. Do not include any markdown formatting 
                 raise Exception("No response found after completion")
             
             if not hasattr(operation.response, 'generated_videos') or not operation.response.generated_videos:
-                logger.error(f"[SYNC] No videos found in response. Operation metadata: {operation.metadata if hasattr(operation, 'metadata') else 'N/A'}")
+                logger.error(f"[SYNC] No videos found in response.")
+                try:
+                    # Log everything we can about the operation
+                    logger.error(f"Operation dict: {operation.__dict__}")
+                    if hasattr(operation, 'result'):
+                        logger.error(f"Operation result: {operation.result}")
+                except Exception as log_err:
+                    logger.error(f"Failed to log operation details: {log_err}")
+                
                 raise Exception("No videos found in response")
             
             generated_video = operation.response.generated_videos[0]
@@ -930,49 +938,37 @@ Return your response as valid JSON only. Do not include any markdown formatting 
     
     def extend_video_sync(
         self,
-        video_data: bytes,
+        video_object,  # This should be the video object from a previous generation
         prompt: str
-    ) -> bytes:
+    ) -> tuple:
         """
         Extend an existing video by approximately 8 seconds synchronously.
         Uses Veo's video extension feature.
         
         Args:
-            video_data: The video bytes to extend (from previous generation)
+            video_object: The video object from a previous generation (operation.response.generated_videos[0].video)
             prompt: Text prompt describing what should happen in the extension
         
         Returns:
-            Extended video data as bytes (MP4 format)
+            Tuple of (extended video data as bytes, video object for further extension)
         """
         try:
             import time
-            from io import BytesIO
-            
             from google.genai import types
             
             model_name = self.video_model_name or "veo-3.1-generate-preview"
-            logger.info(f"[SYNC] Extending video ({len(video_data)} bytes)")
+            logger.info(f"[SYNC] Extending video with prompt: {prompt[:100]}...")
             
-            # Upload the video to get a file reference
-            # The Veo API expects a file object for extension
-            video_buffer = BytesIO(video_data)
-            
-            # Upload the video file first
-            uploaded_file = self.genai_client.files.upload(
-                file=video_buffer,
-                config={"mime_type": "video/mp4"}
-            )
-            
-            logger.info(f"[SYNC] Uploaded video for extension: {uploaded_file.name if hasattr(uploaded_file, 'name') else 'unknown'}")
-            
-            # Start video extension - use empty config to ensure defaults
-            # The 'encoding' error suggests the SDK might be injecting disallowed params if config is missing or inferred
-            # Explicitly providing an empty config might help
-            
+            # Start video extension using the video parameter
+            # According to the API, we pass the video object from previous generation
             operation = self.genai_client.models.generate_videos(
                 model=model_name,
-                video=uploaded_file,
-                prompt=prompt
+                video=video_object,  # Pass the video object from previous generation
+                prompt=prompt,
+                config=types.GenerateVideosConfig(
+                    number_of_videos=1,
+                    resolution="720p"
+                )
             )
             
             operation_name = operation.name if hasattr(operation, 'name') else str(operation)
@@ -1031,7 +1027,8 @@ Return your response as valid JSON only. Do not include any markdown formatting 
                 raise Exception("Downloaded extended video file is empty")
             
             logger.info(f"[SYNC] Video extended successfully ({len(extended_data)} bytes)")
-            return extended_data
+            # Return both bytes and video object for further extension
+            return extended_data, extended_video.video
             
         except Exception as e:
             logger.error(f"[SYNC] Video extension failed: {str(e)}", exc_info=True)
@@ -1058,43 +1055,157 @@ Return your response as valid JSON only. Do not include any markdown formatting 
             Final extended video data as bytes (MP4 format)
         """
         try:
+            import time
+            from google.genai import types
+            
             # Clamp duration to valid range
             target_duration_seconds = max(8, min(60, target_duration_seconds))
             
+            model_name = self.video_model_name or "veo-3.1-generate-preview"
             logger.info(f"[SYNC] Generating extended video: target={target_duration_seconds}s, refs={len(reference_images or [])}")
             
-            # Generate initial video (approximately 8 seconds)
-            if reference_images and len(reference_images) > 0:
-                video_data = self.generate_video_with_references_sync(
-                    prompt=prompt,
-                    reference_images=reference_images,
+            # Step 1: Generate initial video and get the video object for chaining
+            # Build reference image objects if provided
+            reference_image_objects = []
+            if reference_images:
+                for i, img_bytes in enumerate(reference_images[:3]):
+                    try:
+                        if types is not None:
+                            mime_type = "image/jpeg"
+                            if img_bytes[:4] == b'\x89PNG':
+                                mime_type = "image/png"
+                            image_obj = types.Image(
+                                image_bytes=img_bytes,
+                                mime_type=mime_type
+                            )
+                            ref_image = types.VideoGenerationReferenceImage(
+                                image=image_obj,
+                                reference_type="asset"
+                            )
+                            reference_image_objects.append(ref_image)
+                            logger.info(f"[SYNC] Added reference image {i+1} ({len(img_bytes)} bytes)")
+                    except Exception as e:
+                        logger.warning(f"[SYNC] Failed to create reference image: {e}")
+            
+            # Build config
+            config = types.GenerateVideosConfig(
+                number_of_videos=1,
+                resolution="720p"
+            )
+            if reference_image_objects:
+                config = types.GenerateVideosConfig(
+                    number_of_videos=1,
+                    resolution="720p",
+                    reference_images=reference_image_objects,
                     aspect_ratio=aspect_ratio
                 )
-            else:
-                video_data = self.generate_video_sync(
-                    prompt=prompt,
-                    duration_seconds=8,
-                    aspect_ratio=aspect_ratio
-                )
+            
+            # Generate initial video
+            operation = self.genai_client.models.generate_videos(
+                model=model_name,
+                prompt=prompt,
+                config=config
+            )
+            
+            # Poll until complete
+            max_wait_time = 600
+            wait_interval = 10
+            elapsed_time = 0
+            
+            while not operation.done:
+                if elapsed_time >= max_wait_time:
+                    raise Exception(f"Video generation timed out after {max_wait_time} seconds")
+                logger.info(f"[SYNC] Waiting for initial video... (elapsed: {elapsed_time}s)")
+                time.sleep(wait_interval)
+                elapsed_time += wait_interval
+                if hasattr(self.genai_client, 'operations') and hasattr(self.genai_client.operations, 'get'):
+                    operation = self.genai_client.operations.get(operation)
+            
+            if hasattr(operation, 'error') and operation.error:
+                raise Exception(f"Video generation failed: {operation.error}")
+            
+            if not hasattr(operation, 'response') or not operation.response:
+                raise Exception("No response found after completion")
+            if not hasattr(operation.response, 'generated_videos') or not operation.response.generated_videos:
+                raise Exception("No videos found in response")
+            
+            generated_video = operation.response.generated_videos[0]
+            if not hasattr(generated_video, 'video') or not generated_video.video:
+                raise Exception("No video file available")
+            
+            # Store the video object for chaining extensions
+            current_video_object = generated_video.video
+            
+            logger.info("[SYNC] Initial video generated successfully")
             
             current_duration = 8
             extension_count = 0
             
-            # Extend until we reach target duration
+            # Step 2: Extend until we reach target duration
             while current_duration < target_duration_seconds:
                 extension_count += 1
                 logger.info(f"[SYNC] Extension {extension_count}: current={current_duration}s, target={target_duration_seconds}s")
                 
                 try:
-                    video_data = self.extend_video_sync(
-                        video_data=video_data,
-                        prompt=prompt
+                    # Extend video using the video object from previous generation
+                    operation = self.genai_client.models.generate_videos(
+                        model=model_name,
+                        video=current_video_object,  # Pass the video object from previous generation
+                        prompt=prompt,
+                        config=types.GenerateVideosConfig(
+                            number_of_videos=1,
+                            resolution="720p"
+                        )
                     )
+                    
+                    # Poll until complete
+                    elapsed_time = 0
+                    while not operation.done:
+                        if elapsed_time >= max_wait_time:
+                            raise Exception(f"Video extension timed out")
+                        logger.info(f"[SYNC] Waiting for extension... (elapsed: {elapsed_time}s)")
+                        time.sleep(wait_interval)
+                        elapsed_time += wait_interval
+                        if hasattr(self.genai_client, 'operations') and hasattr(self.genai_client.operations, 'get'):
+                            operation = self.genai_client.operations.get(operation)
+                    
+                    if hasattr(operation, 'error') and operation.error:
+                        raise Exception(f"Extension failed: {operation.error}")
+                    
+                    if not hasattr(operation.response, 'generated_videos') or not operation.response.generated_videos:
+                        raise Exception("No videos in extension response")
+                    
+                    extended_video = operation.response.generated_videos[0]
+                    if not hasattr(extended_video, 'video') or not extended_video.video:
+                        raise Exception("No video file in extension")
+                    
+                    # Update video object for next extension
+                    current_video_object = extended_video.video
                     current_duration += 8
+                    logger.info(f"[SYNC] Extension {extension_count} completed")
+                    
                 except Exception as ext_error:
                     logger.warning(f"[SYNC] Extension {extension_count} failed: {ext_error}")
-                    # Return what we have so far
                     break
+            
+            # Step 3: Download the final video
+            video_file = self.genai_client.files.download(file=current_video_object)
+            
+            # Read video data
+            if hasattr(video_file, 'read'):
+                video_data = video_file.read()
+            elif hasattr(video_file, 'getvalue'):
+                video_data = video_file.getvalue()
+            elif isinstance(video_file, bytes):
+                video_data = video_file
+            else:
+                video_data = getattr(video_file, 'content', None)
+                if not video_data:
+                    raise Exception(f"Unable to extract video data from: {type(video_file)}")
+            
+
+            if not video_data:
+                raise Exception("Downloaded video file is empty")
             
             logger.info(f"[SYNC] Extended video complete: {extension_count} extensions, ~{current_duration}s, {len(video_data)} bytes")
             return video_data
