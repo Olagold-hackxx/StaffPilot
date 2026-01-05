@@ -1066,6 +1066,34 @@ class ApiClient {
     return this.request(`/analytics/reports/${reportId}`);
   }
 
+  // Quick Setup endpoints for AI-powered onboarding
+  async quickSetupResearch(websiteUrl?: string): Promise<{
+    description: string;
+    company_name?: string;
+    industry?: string;
+    products_services?: string;
+    target_audience?: string;
+    brand_voice?: string;
+    sources: Array<{ title: string; uri: string }>;
+  }> {
+    return this.request('/tenants/me/quick-setup/research', {
+      method: 'POST',
+      body: websiteUrl ? JSON.stringify({ website_url: websiteUrl }) : JSON.stringify({}),
+    });
+  }
+
+  async quickSetupSave(description: string, category: string = 'company_overview'): Promise<{
+    success: boolean;
+    document_id?: string;
+    chunk_count: number;
+    message: string;
+  }> {
+    return this.request('/tenants/me/quick-setup/save', {
+      method: 'POST',
+      body: JSON.stringify({ description, category }),
+    });
+  }
+
 }
 
 export const apiClient = new ApiClient(API_BASE_URL);

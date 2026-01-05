@@ -59,6 +59,29 @@ async def staffpilot_exception_handler(request: Request, exc: StaffPilotExceptio
     )
 
 
+from fastapi import HTTPException
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """
+    Handle HTTPException - sanitize 500 errors to not expose internal details.
+    400-level errors keep their messages since they're user-facing validation errors.
+    """
+    if exc.status_code >= 500:
+        # Log the actual error for debugging
+        logger.error(f"HTTP {exc.status_code} error: {exc.detail}")
+        # Return generic message to client
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": "An unexpected error occurred. Please try again later."}
+        )
+    # For 4xx errors, return the original message (these are intentional user-facing messages)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail}
+    )
+
+
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):
     """Handle general exceptions"""

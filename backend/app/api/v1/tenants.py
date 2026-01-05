@@ -849,3 +849,335 @@ async def import_brand_assets_from_drive(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to import files: {str(e)}"
         )
+
+
+# =====================
+# Quick Setup AI-Powered Onboarding API
+# =====================
+
+class QuickSetupResearchRequest(BaseModel):
+    """Optional request body for research endpoint"""
+    website_url: Optional[str] = None  # Override tenant's website_url
+
+
+class QuickSetupResearchResponse(BaseModel):
+    """Response from AI website research"""
+    description: str
+    company_name: Optional[str] = None
+    industry: Optional[str] = None
+    products_services: Optional[str] = None
+    target_audience: Optional[str] = None
+    brand_voice: Optional[str] = None
+    sources: List[dict] = []
+
+
+class QuickSetupSaveRequest(BaseModel):
+    """Request to save AI-generated description as knowledge chunk"""
+    description: str
+    category: str = "company_overview"  # company_overview, brand_guidelines, product_catalog, target_audience
+
+
+class QuickSetupSaveResponse(BaseModel):
+    """Response from saving Quick Setup description"""
+    success: bool
+    document_id: Optional[str] = None
+    chunk_count: int = 0
+    message: str
+
+
+@router.post("/me/quick-setup/research", response_model=QuickSetupResearchResponse)
+async def quick_setup_research(
+    request: Optional[QuickSetupResearchRequest] = None,
+    current_tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Research tenant's website using Gemini Search Grounding to generate
+    an AI-powered business description for quick onboarding setup.
+    
+    Uses the website_url from tenant settings (or override in request body).
+    """
+    from google import genai
+    from google.genai import types
+    from app.config import settings
+    
+    # Get website URL from request or tenant
+    website_url = None
+    if request and request.website_url:
+        website_url = request.website_url
+    elif current_tenant.website_url:
+        website_url = current_tenant.website_url
+    
+    if not website_url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No website URL found. Please provide a website URL in settings first."
+        )
+    
+    try:
+        api_key = settings.GOOGLE_API_KEY
+        if not api_key:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Gemini API key not configured"
+            )
+        
+        client = genai.Client(api_key=api_key)
+        
+        # Research prompt with structured output request
+        research_prompt = f"""You are a business analyst. Research the following website and provide structured business information.
+
+Website: {website_url}
+
+IMPORTANT: Do NOT include any preamble, introduction, or acknowledgment. Start DIRECTLY with the content. Do NOT say things like "Okay, I will research..." or "Here's a breakdown...". Just provide the information.
+
+Provide the following information in a structured markdown format:
+
+## Company Overview
+A comprehensive 2-3 paragraph description of what the company does, their mission, and key value propositions.
+
+## Company Name
+The official name of the company.
+
+## Industry
+The primary industry or sector they operate in.
+
+## Products/Services
+A detailed description of their main products or services.
+
+## Target Audience
+Who are their ideal customers? Include demographics, business types, or user personas if identifiable.
+
+## Brand Voice
+Based on their website content and messaging, describe their brand voice and tone (e.g., professional, friendly, innovative, authoritative, casual, etc.).
+
+Be thorough and accurate. Include specific details found on their website. This information will be used to train an AI marketing assistant."""
+
+        # Call Gemini with Google Search grounding
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=research_prompt,
+            config=types.GenerateContentConfig(
+                tools=[types.Tool(google_search=types.GoogleSearch())],
+                temperature=0.3
+            )
+        )
+        
+        # Extract content
+        full_content = ""
+        if hasattr(response, 'text') and response.text:
+            full_content = response.text
+        elif hasattr(response, 'parts') and response.parts:
+            full_content = " ".join([p.text for p in response.parts if hasattr(p, 'text')])
+        
+        # Extract grounding sources
+        sources = []
+        if hasattr(response, 'candidates') and response.candidates:
+            for candidate in response.candidates:
+                if hasattr(candidate, 'grounding_metadata') and candidate.grounding_metadata:
+                    metadata = candidate.grounding_metadata
+                    if hasattr(metadata, 'grounding_chunks') and metadata.grounding_chunks:
+                        for chunk in metadata.grounding_chunks:
+                            if hasattr(chunk, 'web') and chunk.web:
+                                sources.append({
+                                    "title": getattr(chunk.web, 'title', ''),
+                                    "uri": getattr(chunk.web, 'uri', '')
+                                })
+        
+        # Parse structured sections from the response
+        company_name = None
+        industry = None
+        products_services = None
+        target_audience = None
+        brand_voice = None
+        
+        # Simple parsing - look for section headers
+        content_lower = full_content.lower()
+        lines = full_content.split('\n')
+        
+        current_section = None
+        section_content = {}
+        
+        for line in lines:
+            line_lower = line.lower().strip()
+            if 'company name' in line_lower:
+                current_section = 'company_name'
+            elif 'industry' in line_lower:
+                current_section = 'industry'
+            elif 'products' in line_lower or 'services' in line_lower:
+                current_section = 'products_services'
+            elif 'target audience' in line_lower:
+                current_section = 'target_audience'
+            elif 'brand voice' in line_lower:
+                current_section = 'brand_voice'
+            elif 'company overview' in line_lower:
+                current_section = 'overview'
+            elif current_section and line.strip():
+                if current_section not in section_content:
+                    section_content[current_section] = []
+                # Clean the line (remove ** markdown)
+                clean_line = line.strip().lstrip('*').rstrip('*').strip()
+                if clean_line and not clean_line.startswith('**'):
+                    section_content[current_section].append(clean_line)
+        
+        # Extract values
+        company_name = '\n'.join(section_content.get('company_name', []))[:200] if section_content.get('company_name') else None
+        industry = '\n'.join(section_content.get('industry', []))[:200] if section_content.get('industry') else None
+        products_services = '\n'.join(section_content.get('products_services', []))[:1000] if section_content.get('products_services') else None
+        target_audience = '\n'.join(section_content.get('target_audience', []))[:500] if section_content.get('target_audience') else None
+        brand_voice = '\n'.join(section_content.get('brand_voice', []))[:300] if section_content.get('brand_voice') else None
+        
+        logger.info(f"Quick Setup research completed for {website_url} with {len(sources)} sources")
+        
+        return QuickSetupResearchResponse(
+            description=full_content,
+            company_name=company_name,
+            industry=industry,
+            products_services=products_services,
+            target_audience=target_audience,
+            brand_voice=brand_voice,
+            sources=sources
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Quick Setup research failed: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to research website. Please check the URL and try again."
+        )
+
+
+@router.post("/me/quick-setup/save", response_model=QuickSetupSaveResponse)
+async def quick_setup_save(
+    request: QuickSetupSaveRequest,
+    current_tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Save AI-generated business description as a knowledge chunk.
+    
+    This creates a pseudo-document and stores its embeddings in ChromaDB,
+    making the content available for RAG retrieval in campaigns and content creation.
+    """
+    from app.models.document import Document, DocumentStatus, DocumentType
+    from app.services.llm.factory import create_llm_service
+    from app.services.vector_store import get_vector_store_service
+    from datetime import datetime, timezone
+    import uuid as uuid_lib
+    
+    if not request.description or len(request.description.strip()) < 50:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Description must be at least 50 characters"
+        )
+    
+    try:
+        # Create pseudo-document record
+        doc_id = uuid_lib.uuid4()
+        filename = f"quick_setup_{request.category}_{doc_id.hex[:8]}.txt"
+        
+        document = Document(
+            id=doc_id,
+            tenant_id=current_tenant.id,
+            assistant_id=None,
+            uploaded_by=current_user.id,
+            filename=filename,
+            original_filename=filename,
+            file_type=DocumentType.TXT,  # Use TXT type; ai_generated flag is in meta_data
+            file_size=len(request.description.encode('utf-8')),
+            storage_key=f"virtual/quick_setup/{current_tenant.id}/{doc_id}",
+            storage_url=None,  # No actual file stored
+            content_preview=request.description[:500],
+            extracted_text=request.description,
+            meta_data={
+                "source": "quick_setup",
+                "category": request.category,
+                "required_type": request.category,
+                "document_category": "required",
+                "ai_generated": True
+            },
+            status=DocumentStatus.PROCESSING
+        )
+        
+        db.add(document)
+        await db.commit()
+        await db.refresh(document)
+        
+        # Generate embeddings and store in ChromaDB
+        llm_service = create_llm_service()
+        
+        # Split into chunks if content is large
+        text = request.description
+        chunk_size = 1000
+        overlap = 200
+        chunks = []
+        
+        if len(text) <= chunk_size:
+            chunks = [text]
+        else:
+            start = 0
+            while start < len(text):
+                end = min(start + chunk_size, len(text))
+                chunk = text[start:end]
+                if chunk.strip():
+                    chunks.append(chunk.strip())
+                start = end - overlap if end < len(text) else len(text)
+        
+        # Generate embeddings for each chunk
+        chunk_embeddings = []
+        for i, chunk_text in enumerate(chunks):
+            try:
+                embeddings_result = await llm_service.generate_embeddings([chunk_text])
+                embedding = embeddings_result[0] if embeddings_result else None
+                
+                if embedding:
+                    chunk_embeddings.append({
+                        "chunk_index": i,
+                        "content": chunk_text,
+                        "embedding": embedding,
+                        "token_count": len(chunk_text.split())
+                    })
+            except Exception as e:
+                logger.warning(f"Failed to generate embedding for chunk {i}: {str(e)}")
+        
+        # Store in ChromaDB
+        if chunk_embeddings:
+            vector_store = get_vector_store_service()
+            vector_store.add_document_chunks(
+                tenant_id=current_tenant.id,
+                document_id=document.id,
+                chunks=chunk_embeddings,
+                assistant_id=None
+            )
+            logger.info(f"Stored {len(chunk_embeddings)} chunks in ChromaDB for Quick Setup document {doc_id}")
+        
+        # Update document status
+        document.chunk_count = len(chunks)
+        document.embedding_count = len(chunk_embeddings)
+        document.status = DocumentStatus.COMPLETED
+        document.processed_at = datetime.now(timezone.utc)
+        
+        await db.commit()
+        await db.refresh(document)
+        
+        logger.info(f"Quick Setup save completed: doc={doc_id}, chunks={len(chunks)}, embeddings={len(chunk_embeddings)}")
+        
+        return QuickSetupSaveResponse(
+            success=True,
+            document_id=str(document.id),
+            chunk_count=len(chunk_embeddings),
+            message=f"Successfully saved business information as {len(chunk_embeddings)} knowledge chunks"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Quick Setup save failed: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to save business information. Please try again."
+        )
+

@@ -28,6 +28,7 @@ class DocumentType(str, enum.Enum):
     CSV = "csv"
     JSON = "json"
     OTHER = "other"
+    AI_GENERATED = "ai_generated"  # For Quick Setup AI-generated knowledge chunks
 
 
 class Document(Base):
