@@ -87,6 +87,21 @@ class Settings(BaseSettings):
     STRIPE_SECRET_KEY: Optional[str] = None
     STRIPE_WEBHOOK_SECRET: Optional[str] = None
     
+    # Email Configuration
+    EMAIL_PROVIDER: str = "console"  # Options: gmail, smtp, sendgrid, console
+    EMAIL_FROM_ADDRESS: str = "noreply@staffpilot.app"
+    EMAIL_FROM_NAME: str = "StaffPilot"
+    EMAIL_VERIFICATION_EXPIRE_HOURS: int = 24
+    PASSWORD_RESET_EXPIRE_HOURS: int = 1
+    
+    # SMTP Configuration (for gmail or smtp provider)
+    # For Gmail: Use App Password from https://myaccount.google.com/apppasswords
+    SMTP_HOST: Optional[str] = None  # e.g., "smtp.gmail.com" for Gmail
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: Optional[str] = None  # Your email address
+    SMTP_PASSWORD: Optional[str] = None  # App Password for Gmail
+    SMTP_USE_TLS: bool = True
+    
     # Social Media OAuth Credentials
     FACEBOOK_APP_ID: Optional[str] = None
     FACEBOOK_APP_SECRET: Optional[str] = None

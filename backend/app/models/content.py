@@ -78,6 +78,7 @@ class ScheduledPost(Base):
     platforms = Column(JSON, default=[])  # List of platforms to post to
     include_images = Column(Boolean, default=False)
     include_video = Column(Boolean, default=False)
+    requires_approval = Column(Boolean, default=False)  # If true, content waits for manual approval before publishing
     
     # Schedule timing
     start_date = Column(DateTime(timezone=True), nullable=False)  # When to start the schedule

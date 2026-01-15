@@ -280,7 +280,7 @@ Return your response as valid JSON only. Do not include any markdown formatting 
             import base64
             from google.genai import types
             
-            model_name = self.image_model_name or "gemini-2.5-flash-image"
+            model_name = self.image_model_name or "gemini-3-pro-image-preview"
             logger.info(f"Generating {number_of_images} image(s) with {model_name}, prompt: {prompt[:100]}...")
             
             if reference_images:
@@ -487,7 +487,7 @@ Return your response as valid JSON only. Do not include any markdown formatting 
             import base64
             from google.genai import types
             
-            model_name = self.image_model_name or "gemini-2.5-flash-image"
+            model_name = self.image_model_name or "gemini-3-pro-image-preview"
             logger.info(f"[SYNC] Generating {number_of_images} image(s) with {model_name}")
             
             images = []
@@ -599,9 +599,12 @@ Return your response as valid JSON only. Do not include any markdown formatting 
             
             def _generate():
                 # Start video generation - returns an operation
+                # Append negative constraint for text/subtitles
+                full_prompt = f"{prompt} Do not include any text, subtitles on screen, or captions in the video."
+                
                 operation = self.genai_client.models.generate_videos(
                     model=model_name,
-                    prompt=prompt
+                    prompt=full_prompt
                 )
                 return operation
             
@@ -713,9 +716,12 @@ Return your response as valid JSON only. Do not include any markdown formatting 
                 )
             
             # Start video generation
+            # Append negative constraint for text/subtitles
+            full_prompt = f"{prompt} Do not include any text, subtitles on screen, or captions in the video."
+            
             operation = self.genai_client.models.generate_videos(
                 model=model_name,
-                prompt=prompt
+                prompt=full_prompt
             )
             
             operation_name = operation.name if hasattr(operation, 'name') else str(operation)
@@ -852,16 +858,19 @@ Return your response as valid JSON only. Do not include any markdown formatting 
                 )
             
             # Start video generation
+            # Append negative constraint for text/subtitles
+            full_prompt = f"{prompt} Do not include any text, subtitles on screen, or captions in the video."
+            
             if config:
                 operation = self.genai_client.models.generate_videos(
                     model=model_name,
-                    prompt=prompt,
+                    prompt=full_prompt,
                     config=config
                 )
             else:
                 operation = self.genai_client.models.generate_videos(
                     model=model_name,
-                    prompt=prompt,
+                    prompt=full_prompt,
                     config=types.GenerateVideosConfig(aspect_ratio=aspect_ratio) if types else None
                 )
             
@@ -961,10 +970,13 @@ Return your response as valid JSON only. Do not include any markdown formatting 
             
             # Start video extension using the video parameter
             # According to the API, we pass the video object from previous generation
+            # Append negative constraint for text/subtitles
+            full_prompt = f"{prompt} Do not include any text, subtitles on screen, or captions in the video."
+            
             operation = self.genai_client.models.generate_videos(
                 model=model_name,
                 video=video_object,  # Pass the video object from previous generation
-                prompt=prompt,
+                prompt=full_prompt,
                 config=types.GenerateVideosConfig(
                     number_of_videos=1,
                     resolution="720p"
@@ -1101,9 +1113,12 @@ Return your response as valid JSON only. Do not include any markdown formatting 
                 )
             
             # Generate initial video
+            # Append negative constraint for text/subtitles
+            full_prompt = f"{prompt} Do not include any text, subtitles on screen, or captions in the video."
+            
             operation = self.genai_client.models.generate_videos(
                 model=model_name,
-                prompt=prompt,
+                prompt=full_prompt,
                 config=config
             )
             
@@ -1151,7 +1166,7 @@ Return your response as valid JSON only. Do not include any markdown formatting 
                     operation = self.genai_client.models.generate_videos(
                         model=model_name,
                         video=current_video_object,  # Pass the video object from previous generation
-                        prompt=prompt,
+                        prompt=full_prompt,
                         config=types.GenerateVideosConfig(
                             number_of_videos=1,
                             resolution="720p"

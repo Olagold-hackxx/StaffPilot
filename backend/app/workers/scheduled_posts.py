@@ -156,6 +156,7 @@ def execute_scheduled_post(self, scheduled_post_id: str) -> Dict[str, Any]:
                 "platforms": scheduled_post.platforms or [],
                 "include_images": scheduled_post.include_images,
                 "include_video": scheduled_post.include_video,
+                "requires_approval": scheduled_post.requires_approval,  # Pass approval flag
             }
             
             # Queue the content creation task

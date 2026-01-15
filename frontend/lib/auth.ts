@@ -38,6 +38,22 @@ export class AuthService {
     return user;
   }
 
+  async verifyEmail(email: string, code: string) {
+    return apiClient.verifyEmail(email, code);
+  }
+
+  async resendVerification(email: string) {
+    return apiClient.resendVerification(email);
+  }
+
+  async forgotPassword(email: string) {
+    return apiClient.forgotPassword(email);
+  }
+
+  async resetPassword(token: string, newPassword: string) {
+    return apiClient.resetPassword(token, newPassword);
+  }
+
   async getCurrentUser(): Promise<AuthUser | null> {
     if (!apiClient['token']) {
       return null;

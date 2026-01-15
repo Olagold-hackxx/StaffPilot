@@ -178,6 +178,34 @@ class ApiClient {
     return this.request<AuthUser>('/auth/me');
   }
 
+  async verifyEmail(email: string, code: string) {
+    return this.request<{ message: string; success: boolean }>('/auth/verify-email', {
+      method: 'POST',
+      body: JSON.stringify({ email, code }),
+    });
+  }
+
+  async resendVerification(email: string) {
+    return this.request<{ message: string; success: boolean }>('/auth/resend-verification', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    });
+  }
+
+  async forgotPassword(email: string) {
+    return this.request<{ message: string; success: boolean }>('/auth/forgot-password', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    });
+  }
+
+  async resetPassword(token: string, newPassword: string) {
+    return this.request<{ message: string; success: boolean }>('/auth/reset-password', {
+      method: 'POST',
+      body: JSON.stringify({ token, new_password: newPassword }),
+    });
+  }
+
   // Tenant endpoints
   async getTenant(): Promise<{ name?: string; website_url?: string; [key: string]: any }> {
     return this.request<{ name?: string; website_url?: string; [key: string]: any }>('/tenants/me');
@@ -547,6 +575,7 @@ class ApiClient {
     platforms: string[];
     include_images: boolean;
     include_video: boolean;
+    requires_approval?: boolean;
     start_date: string;
     end_date?: string;
   }) {
@@ -593,6 +622,23 @@ class ApiClient {
   async deleteScheduledPost(scheduledPostId: string) {
     return this.request(`/scheduled-posts/${scheduledPostId}`, {
       method: 'DELETE',
+    });
+  }
+
+  // Content Approval endpoints
+  async listPendingContent(): Promise<{ pending_content?: any[]; total?: number }> {
+    return this.request<{ pending_content?: any[]; total?: number }>('/scheduled-posts/pending-content');
+  }
+
+  async approveContent(contentId: string) {
+    return this.request(`/scheduled-posts/content/${contentId}/approve`, {
+      method: 'POST',
+    });
+  }
+
+  async rejectContent(contentId: string) {
+    return this.request(`/scheduled-posts/content/${contentId}/reject`, {
+      method: 'POST',
     });
   }
 

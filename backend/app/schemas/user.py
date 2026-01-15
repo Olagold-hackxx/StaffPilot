@@ -50,3 +50,33 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
     user: UserResponse
 
+
+# Auth flow schemas
+class ForgotPasswordRequest(BaseModel):
+    """Request to initiate password reset"""
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    """Request to reset password with token"""
+    token: str
+    new_password: str = Field(..., min_length=8)
+
+
+class VerifyEmailRequest(BaseModel):
+    """Request to verify email with OTP code"""
+    email: EmailStr
+    code: str = Field(..., min_length=6, max_length=6, description="6-digit verification code")
+
+
+class ResendVerificationRequest(BaseModel):
+    """Request to resend verification email"""
+    email: EmailStr
+
+
+class MessageResponse(BaseModel):
+    """Generic message response"""
+    message: str
+    success: bool = True
+
+

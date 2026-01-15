@@ -1053,6 +1053,7 @@ def _execute_image_generation(
             select(BrandAsset)
             .where(BrandAsset.tenant_id == UUID(tenant_id))
             .where(BrandAsset.asset_type == "image")
+            .where(BrandAsset.is_active == True)
             .limit(3)
         )
         brand_assets = result.scalars().all()
@@ -1241,6 +1242,7 @@ IMPORTANT: Ensure all text in the generated media is in English and free of spel
             select(BrandAsset)
             .where(BrandAsset.tenant_id == UUID(tenant_id))
             .where(BrandAsset.asset_type == "image")
+            .where(BrandAsset.is_active == True)
             .limit(3)  # Veo 3.1 supports up to 3 reference images
         )
         brand_assets = result.scalars().all()

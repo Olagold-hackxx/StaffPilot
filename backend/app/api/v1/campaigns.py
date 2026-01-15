@@ -1929,6 +1929,18 @@ async def delete_brand_asset(
         asset.is_active = False
         await db.commit()
         
+        # Delete from storage (fire and forget or await?)
+        # Since we want to ensure cleanup, we await it.
+        # If it fails, we log it but don't fail the API call since the DB record is already "deleted"
+        if asset.url:
+            try:
+                from app.services.storage import get_storage
+                storage = get_storage()
+                await storage.delete(asset.url)
+                logger.info(f"Deleted storage file for asset {asset_id}")
+            except Exception as e:
+                logger.error(f"Failed to delete storage file for asset {asset_id}: {e}")
+        
         logger.info(f"Deleted brand asset {asset_id}")
         
         return {"success": True, "message": "Brand asset deleted"}

@@ -100,7 +100,7 @@ class DocumentService:
             file_size=file_size,
             storage_key=storage_key,
             storage_url=storage_url,
-            content_preview=file_content[:500].decode('utf-8', errors='ignore'),
+            content_preview=file_content[:500].decode('utf-8', errors='ignore').replace('\x00', '') if file_type in [DocumentType.TXT, DocumentType.MD, DocumentType.HTML, DocumentType.CSV, DocumentType.JSON] else None,
             meta_data=meta_data,
             status=DocumentStatus.PENDING
         )

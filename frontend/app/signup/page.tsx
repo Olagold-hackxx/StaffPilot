@@ -87,8 +87,8 @@ export default function SignUpPage() {
         description: "Account created successfully",
       })
 
-      // Redirect to onboarding flow
-      router.push("/onboarding")
+      // Redirect to verification flow
+      router.push(`/verify-email?email=${encodeURIComponent(form.getValues("email"))}`)
     } catch (error: any) {
       toast({
         title: "Error",

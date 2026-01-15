@@ -10,7 +10,7 @@ import {
   FileText, Plus, Loader2, CheckCircle2, Clock, 
   Facebook, Instagram, Linkedin, Twitter, Music,
   Sparkles, Image, Video, Calendar, Trash2, Pause, Play,
-  Send, Eye, Filter, Search, X
+  Send, Eye, Filter, Search, X, ExternalLink
 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -60,6 +60,17 @@ interface ScheduledPost {
   created_at: string
 }
 
+interface PendingContent {
+  id: string
+  platform: string
+  content: string
+  title: string
+  images: string[]
+  videos: string[]
+  created_at: string
+  execution_id: string
+}
+
 type Execution = AgentExecution
 
 const platformIcons: Record<string, any> = {
@@ -84,6 +95,7 @@ export default function ContentPage() {
   const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>([])
   const [includeImages, setIncludeImages] = useState(false)
   const [includeVideo, setIncludeVideo] = useState(false)
+  const [requiresApproval, setRequiresApproval] = useState(false)
   const [isScheduled, setIsScheduled] = useState(false)
   const [scheduleName, setScheduleName] = useState("")
   const [scheduleType, setScheduleType] = useState<"one_time" | "daily" | "weekly" | "monthly">("daily")
@@ -95,6 +107,8 @@ export default function ContentPage() {
   // Data state
   const [publishedPosts, setPublishedPosts] = useState<PublishedPost[]>([])
   const [scheduledPosts, setScheduledPosts] = useState<ScheduledPost[]>([])
+  const [pendingContent, setPendingContent] = useState<PendingContent[]>([])
+  const [selectedPendingContent, setSelectedPendingContent] = useState<PendingContent | null>(null)
   const [executions, setExecutions] = useState<Execution[]>([])
   const [currentExecution, setCurrentExecution] = useState<Execution | null>(null)
   
@@ -174,6 +188,14 @@ export default function ContentPage() {
         setScheduledPosts((scheduled.scheduled_posts || []).sort((a: ScheduledPost, b: ScheduledPost) => 
           new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
         ))
+
+        // Load pending content
+        try {
+          const pending = await apiClient.listPendingContent()
+          setPendingContent(pending.pending_content || [])
+        } catch (error) {
+          console.error("Failed to load pending content:", error)
+        }
       }
     } catch (error: any) {
       toast({
@@ -227,6 +249,7 @@ export default function ContentPage() {
           platforms: selectedPlatforms,
           include_images: includeImages,
           include_video: includeVideo,
+          requires_approval: requiresApproval,
           start_date: new Date(startDate).toISOString(),
           end_date: endDate ? new Date(endDate).toISOString() : undefined,
         })
@@ -249,6 +272,7 @@ export default function ContentPage() {
             platforms: selectedPlatforms,
             include_images: includeImages,
             include_video: includeVideo,
+            requires_approval: requiresApproval,
           },
         })
 
@@ -277,6 +301,42 @@ export default function ContentPage() {
     }
   }
 
+  async function handleApprove(contentId: string) {
+    try {
+      await apiClient.approveContent(contentId)
+      toast({
+        title: "Approved",
+        description: "Content approved and queued for publishing",
+      })
+      // Refresh list
+      fetchData()
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to approve content",
+        variant: "destructive",
+      })
+    }
+  }
+
+  async function handleReject(contentId: string) {
+    try {
+      await apiClient.rejectContent(contentId)
+      toast({
+        title: "Rejected",
+        description: "Content rejected",
+      })
+      // Refresh list
+      fetchData()
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to reject content",
+        variant: "destructive",
+      })
+    }
+  }
+
   function resetForm() {
     setRequest("")
     setScheduleName("")
@@ -286,6 +346,7 @@ export default function ContentPage() {
     setSelectedPlatforms([])
     setIncludeImages(false)
     setIncludeVideo(false)
+    setRequiresApproval(false)
     setScheduleType("daily")
     setScheduleHour(9)
     setScheduleMinute(0)
@@ -496,6 +557,13 @@ export default function ContentPage() {
               <Badge variant="secondary" className="ml-2">{scheduledPosts.length}</Badge>
             )}
           </TabsTrigger>
+          <TabsTrigger value="pending">
+            <Eye className="h-4 w-4 mr-2" />
+            Pending Approval
+            {pendingContent.length > 0 && (
+              <Badge variant="destructive" className="ml-2">{pendingContent.length}</Badge>
+            )}
+          </TabsTrigger>
           <TabsTrigger value="history">
             <FileText className="h-4 w-4 mr-2" />
             History
@@ -504,6 +572,94 @@ export default function ContentPage() {
             )}
           </TabsTrigger>
         </TabsList>
+
+        {/* Pending Approval Tab */}
+        <TabsContent value="pending" className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {pendingContent.length === 0 ? (
+              <div className="col-span-full text-center py-10 bg-muted/20 rounded-lg border border-dashed">
+                <CheckCircle2 className="h-10 w-10 text-muted-foreground mx-auto mb-3" />
+                <h3 className="font-medium text-lg">No content pending approval</h3>
+                <p className="text-muted-foreground">All content has been processed or approved.</p>
+              </div>
+            ) : (
+              pendingContent.map((item) => {
+                const Icon = platformIcons[item.platform.toLowerCase()] || Sparkles
+                return (
+                  <Card key={item.id} className="flex flex-col">
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                       <div className="flex items-center gap-2">
+                            <Icon className="h-5 w-5 text-muted-foreground" />
+                            <CardTitle className="text-sm font-medium capitalize">
+                                {item.platform}
+                            </CardTitle>
+                       </div>
+                       <Badge variant="outline" className="text-yellow-600 border-yellow-200 bg-yellow-50">
+                            Pending
+                       </Badge>
+                    </CardHeader>
+                    <CardContent className="flex-1 pt-4">
+                      <div className="space-y-4">
+                        {item.title && (
+                             <h4 className="font-medium text-sm text-foreground">{item.title}</h4>
+                        )}
+                        <p className="text-sm text-muted-foreground line-clamp-4 whitespace-pre-wrap">
+                          {item.content}
+                        </p>
+                        
+                        {(item.images?.length > 0 || item.videos?.length > 0) && (
+                          <div className="flex gap-2 overflow-x-auto pb-2 pt-2">
+                            {item.images?.map((img, i) => (
+                              <img key={i} src={img} className="h-20 w-auto rounded-md object-cover border" alt="Content media" />
+                            ))}
+                            {item.videos?.map((vid, i) => (
+                               <div key={i} className="h-20 w-32 bg-muted rounded-md flex items-center justify-center border text-xs text-muted-foreground relative">
+                                    <Video className="h-6 w-6 mb-1" />
+                                    <span className="sr-only">Video</span>
+                               </div>
+                            ))}
+                          </div>
+                        )}
+                        
+                        <Button 
+                            variant="ghost" 
+                            className="w-full h-8 text-xs mt-2"
+                            onClick={() => setSelectedPendingContent(item)}
+                        >
+                            <Eye className="h-3 w-3 mr-2" />
+                            View Full Details
+                        </Button>
+                        
+                        <div className="text-xs text-muted-foreground pt-2 border-t mt-2">
+                            Created {new Date(item.created_at).toLocaleDateString()}
+                        </div>
+                      </div>
+                    </CardContent>
+                    <div className="p-4 pt-0 mt-auto flex gap-2">
+                        <Button 
+                            className="flex-1 bg-green-600 hover:bg-green-700 text-white" 
+                            size="sm"
+                            onClick={() => handleApprove(item.id)}
+                        >
+                            <CheckCircle2 className="h-4 w-4 mr-2" />
+                            Approve
+                        </Button>
+                        <Button 
+                            variant="destructive" 
+                            className="flex-1" 
+                            size="sm"
+                            onClick={() => handleReject(item.id)}
+                        >
+                            <X className="h-4 w-4 mr-2" />
+                            Reject
+                        </Button>
+                    </div>
+                  </Card>
+                )
+              })
+            )}
+          </div>
+        </TabsContent>
 
         {/* Published Posts Tab */}
         <TabsContent value="published" className="space-y-4">
@@ -1096,6 +1252,24 @@ export default function ContentPage() {
                   onCheckedChange={setIncludeVideo}
                 />
               </div>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <Eye className="h-5 w-5 text-muted-foreground" />
+                  <div>
+                    <Label htmlFor="requires-approval" className="text-sm font-medium cursor-pointer">
+                      Require Approval
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      Review content before publishing
+                    </p>
+                  </div>
+                </div>
+                <Switch
+                  id="requires-approval"
+                  checked={requiresApproval}
+                  onCheckedChange={setRequiresApproval}
+                />
+              </div>
             </div>
           </div>
           <div className="flex justify-end gap-2 pt-4">
@@ -1131,6 +1305,99 @@ export default function ContentPage() {
               )}
             </Button>
           </div>
+        </DialogContent>
+      </Dialog>
+      {/* Detailed Pending Content Dialog */}
+      <Dialog open={!!selectedPendingContent} onOpenChange={(open) => !open && setSelectedPendingContent(null)}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {selectedPendingContent && (
+                  <>
+                  {(() => {
+                        const Icon = platformIcons[selectedPendingContent.platform.toLowerCase()] || Sparkles
+                        return <Icon className="h-5 w-5 text-muted-foreground" />
+                    })()}
+                  <span className="capitalize">{selectedPendingContent.platform} Content</span>
+                  </>
+              )}
+            </DialogTitle>
+            <DialogDescription>
+                Review content before approving for publication
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedPendingContent && (
+            <div className="space-y-6 py-4">
+                {selectedPendingContent.title && (
+                    <div className="space-y-2">
+                        <Label className="text-sm font-medium text-muted-foreground">Title/Subject</Label>
+                        <div className="p-3 bg-muted/40 rounded-md text-sm font-medium border">
+                            {selectedPendingContent.title}
+                        </div>
+                    </div>
+                )}
+
+                <div className="space-y-2">
+                    <Label className="text-sm font-medium text-muted-foreground">Post Content</Label>
+                    <div className="p-4 bg-muted/40 rounded-md text-sm whitespace-pre-wrap border">
+                        {selectedPendingContent.content}
+                    </div>
+                </div>
+
+                {(selectedPendingContent.images?.length > 0 || selectedPendingContent.videos?.length > 0) && (
+                    <div className="space-y-2">
+                        <Label className="text-sm font-medium text-muted-foreground">Media Assets</Label>
+                        <div className="grid grid-cols-2 gap-4">
+                            {selectedPendingContent.images?.map((img, i) => (
+                                <div key={`img-${i}`} className="relative group rounded-md overflow-hidden border">
+                                    <img src={img} className="w-full h-auto object-cover" alt={`Content image ${i+1}`} />
+                                    <a href={img} target="_blank" rel="noopener noreferrer" className="absolute top-2 right-2 p-1.5 bg-background/80 hover:bg-background rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <ExternalLink className="h-4 w-4" />
+                                    </a>
+                                </div>
+                            ))}
+                            {selectedPendingContent.videos?.map((vid, i) => (
+                                <div key={`vid-${i}`} className="relative rounded-md overflow-hidden border bg-muted aspect-video flex items-center justify-center">
+                                    {/* In a real app, this would be a video player */}
+                                    <div className="text-center p-4">
+                                        <Video className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
+                                        <p className="text-xs text-muted-foreground mb-2">Video Asset {i+1}</p>
+                                        <a href={vid} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline flex items-center justify-center gap-1">
+                                            Open Video <ExternalLink className="h-3 w-3" />
+                                        </a>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                <div className="flex gap-3 pt-4 border-t mt-4">
+                    <Button 
+                        className="flex-1 bg-green-600 hover:bg-green-700 text-white" 
+                        onClick={() => {
+                            handleApprove(selectedPendingContent.id)
+                            setSelectedPendingContent(null)
+                        }}
+                    >
+                        <CheckCircle2 className="h-4 w-4 mr-2" />
+                        Approve & Publish
+                    </Button>
+                    <Button 
+                        variant="destructive" 
+                        className="flex-1"
+                        onClick={() => {
+                            handleReject(selectedPendingContent.id)
+                            setSelectedPendingContent(null)
+                        }}
+                    >
+                        <X className="h-4 w-4 mr-2" />
+                        Reject
+                    </Button>
+                </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

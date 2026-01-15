@@ -155,6 +155,7 @@ def _fetch_brand_asset_bytes(tenant_id: str, limit: int = 5) -> List[bytes]:
             select(BrandAsset)
             .where(BrandAsset.tenant_id == UUID(tenant_id))
             .where(BrandAsset.asset_type == "image")
+            .where(BrandAsset.is_active == True)
             .order_by(BrandAsset.usage_count.desc())  # Prioritize frequently used assets
             .limit(limit)
         )
@@ -1575,16 +1576,74 @@ def execute_content_creation(
                     tasks.append({"task": "Video Generation", "status": "SKIPPED", "details": "Not requested"})
                     logger.info("[TASK 4/6] ⊘ SKIPPED - Video generation not requested")
                 
-                # Step 5: Post to platforms
-                logger.info("[TASK 5/6] Starting platform posting...")
-                created_content_items = []
-                all_media_urls = image_urls + video_urls
-                posting_passed = 0
-                posting_failed = 0
-                posting_skipped = 0
+                # Step 5: Post to platforms (or save as pending_approval if requires_approval=True)
+                requires_approval = request_data.get("requires_approval", False)
                 
+                if requires_approval:
+                    # Content requires manual approval - save without publishing
+                    logger.info("[TASK 5/6] Content requires approval - saving as pending_approval...")
+                    created_content_items = []
+                    all_media_urls = image_urls + video_urls
+                    
+                    for platform in platforms:
+                        generated_content = platform_contents.get(platform, "")
+                        if not generated_content:
+                            created_content_items.append({
+                                "platform": platform,
+                                "status": "skipped",
+                                "error": "No content generated for this platform"
+                            })
+                            continue
+                        
+                        # Create content item with pending_approval status
+                        content_item = ContentItem(
+                            tenant_id=UUID(tenant_id),
+                            execution_id=UUID(execution_id),
+                            content_type="social_post",
+                            platform=platform,
+                            title=f"Post for {platform}",
+                            content=generated_content,
+                            publish_status="pending_approval",
+                            images=image_urls if image_urls else [],
+                            videos=video_urls if video_urls else [],
+                            meta_data={
+                                "requires_approval": True
+                            }
+                        )
+                        
+                        db.add(content_item)
+                        db.commit()
+                        db.refresh(content_item)
+                        
+                        created_content_items.append({
+                            "id": str(content_item.id),
+                            "platform": platform,
+                            "status": "pending_approval",
+                            "content": generated_content[:100] + "..." if len(generated_content) > 100 else generated_content
+                        })
+                        logger.info(f"[TASK 5/6] [{platform}] ⏳ PENDING - Content saved for manual approval")
+                    
+                    tasks.append({"task": "Platform Posting", "status": "PENDING", "details": f"{len(created_content_items)} content item(s) saved for approval"})
+                    posting_passed = 0
+                    posting_failed = 0
+                    posting_skipped = 0
+                    
+                else:
+                    # Normal flow - post to platforms immediately
+                    logger.info("[TASK 5/6] Starting platform posting...")
+                    created_content_items = []
+                    all_media_urls = image_urls + video_urls
+                    posting_passed = 0
+                    posting_failed = 0
+                    posting_skipped = 0
+                
+                # Platform posting loop - skip if requires_approval (already handled above)
                 for platform in platforms:
                     try:
+                        # Skip posting if requires_approval - content already saved as pending_approval
+                        if requires_approval:
+                            continue
+                        
                         # Get platform-specific content
                         generated_content = platform_contents.get(platform, "")
                         if not generated_content:

@@ -38,6 +38,7 @@ class ScheduledPostCreate(BaseModel):
     platforms: List[str] = Field(default=[], description="List of platforms to post to")
     include_images: bool = Field(default=False, description="Include images in content")
     include_video: bool = Field(default=False, description="Include video in content")
+    requires_approval: bool = Field(default=False, description="If true, content requires manual approval before publishing")
     start_date: str = Field(..., description="Start date (ISO format)")
     end_date: Optional[str] = Field(None, description="End date (ISO format, optional)")
 
@@ -50,6 +51,7 @@ class ScheduledPostUpdate(BaseModel):
     platforms: Optional[List[str]] = None
     include_images: Optional[bool] = None
     include_video: Optional[bool] = None
+    requires_approval: Optional[bool] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     is_active: Optional[bool] = None
@@ -66,6 +68,7 @@ class ScheduledPostResponse(BaseModel):
     platforms: List[str]
     include_images: bool
     include_video: bool
+    requires_approval: bool
     start_date: str
     end_date: Optional[str]
     next_run_at: str
@@ -186,6 +189,7 @@ async def create_scheduled_post(
             platforms=post_data.platforms,
             include_images=post_data.include_images,
             include_video=post_data.include_video,
+            requires_approval=post_data.requires_approval,
             start_date=start_date,
             end_date=end_date,
             next_run_at=next_run_at,
@@ -211,6 +215,7 @@ async def create_scheduled_post(
             platforms=scheduled_post.platforms or [],
             include_images=scheduled_post.include_images,
             include_video=scheduled_post.include_video,
+            requires_approval=scheduled_post.requires_approval,
             start_date=scheduled_post.start_date.isoformat(),
             end_date=scheduled_post.end_date.isoformat() if scheduled_post.end_date else None,
             next_run_at=scheduled_post.next_run_at.isoformat(),
@@ -272,6 +277,7 @@ async def list_scheduled_posts(
                     "platforms": sp.platforms or [],
                     "include_images": sp.include_images,
                     "include_video": sp.include_video,
+                    "requires_approval": sp.requires_approval,
                     "start_date": sp.start_date.isoformat(),
                     "end_date": sp.end_date.isoformat() if sp.end_date else None,
                     "next_run_at": sp.next_run_at.isoformat(),
@@ -295,6 +301,130 @@ async def list_scheduled_posts(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to list scheduled posts"
         )
+
+
+# ============================================
+# Content Approval Endpoints
+# ============================================
+
+@router.get("/pending-content", response_model=Dict[str, Any])
+async def list_pending_content(
+    current_tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db)
+):
+    """List all content items pending approval for the current tenant"""
+    try:
+        from app.models.content import ContentItem
+        
+        result = await db.execute(
+            select(ContentItem).where(
+                ContentItem.tenant_id == current_tenant.id,
+                ContentItem.publish_status == "pending_approval"
+            ).order_by(ContentItem.created_at.desc())
+        )
+        pending_items = result.scalars().all()
+        
+        return {
+            "pending_content": [
+                {
+                    "id": str(item.id),
+                    "platform": item.platform,
+                    "content": item.content,
+                    "title": item.title,
+                    "images": item.images or [],
+                    "videos": item.videos or [],
+                    "created_at": item.created_at.isoformat() if item.created_at else None,
+                    "execution_id": str(item.execution_id) if item.execution_id else None
+                }
+                for item in pending_items
+            ],
+            "total": len(pending_items)
+        }
+    
+    except Exception as e:
+        logger.error(f"Error listing pending content: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to list pending content"
+        )
+
+
+@router.post("/content/{content_id}/approve")
+async def approve_content(
+    content_id: UUID,
+    current_tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db)
+):
+    """Approve and publish a pending content item"""
+    try:
+        from app.models.content import ContentItem
+        
+        result = await db.execute(
+            select(ContentItem).where(
+                ContentItem.id == content_id,
+                ContentItem.tenant_id == current_tenant.id
+            )
+        )
+        content_item = result.scalar_one_or_none()
+        
+        if not content_item:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Content not found")
+        
+        if content_item.publish_status != "pending_approval":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, 
+                              detail=f"Content is not pending (status: {content_item.publish_status})")
+        
+        content_item.publish_status = "approved"
+        await db.commit()
+        
+        logger.info(f"Approved content {content_id}")
+        return {"status": "approved", "message": "Content approved and queued for publishing"}
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error approving content: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+                          detail="Failed to approve content")
+
+
+@router.post("/content/{content_id}/reject")
+async def reject_content(
+    content_id: UUID,
+    current_tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db)
+):
+    """Reject a pending content item"""
+    try:
+        from app.models.content import ContentItem
+        
+        result = await db.execute(
+            select(ContentItem).where(
+                ContentItem.id == content_id,
+                ContentItem.tenant_id == current_tenant.id
+            )
+        )
+        content_item = result.scalar_one_or_none()
+        
+        if not content_item:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Content not found")
+        
+        if content_item.publish_status != "pending_approval":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                              detail=f"Content is not pending (status: {content_item.publish_status})")
+        
+        content_item.publish_status = "rejected"
+        await db.commit()
+        
+        logger.info(f"Rejected content {content_id}")
+        return {"status": "rejected"}
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error rejecting content: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+                          detail="Failed to reject content")
 
 
 @router.get("/{scheduled_post_id}", response_model=ScheduledPostResponse)
@@ -330,6 +460,7 @@ async def get_scheduled_post(
             platforms=scheduled_post.platforms or [],
             include_images=scheduled_post.include_images,
             include_video=scheduled_post.include_video,
+            requires_approval=scheduled_post.requires_approval,
             start_date=scheduled_post.start_date.isoformat(),
             end_date=scheduled_post.end_date.isoformat() if scheduled_post.end_date else None,
             next_run_at=scheduled_post.next_run_at.isoformat(),
@@ -391,6 +522,8 @@ async def update_scheduled_post(
             scheduled_post.include_images = post_data.include_images
         if post_data.include_video is not None:
             scheduled_post.include_video = post_data.include_video
+        if post_data.requires_approval is not None:
+            scheduled_post.requires_approval = post_data.requires_approval
         if post_data.start_date is not None:
             scheduled_post.start_date = datetime.fromisoformat(post_data.start_date.replace('Z', '+00:00'))
         if post_data.end_date is not None:
@@ -430,6 +563,7 @@ async def update_scheduled_post(
             platforms=scheduled_post.platforms or [],
             include_images=scheduled_post.include_images,
             include_video=scheduled_post.include_video,
+            requires_approval=scheduled_post.requires_approval,
             start_date=scheduled_post.start_date.isoformat(),
             end_date=scheduled_post.end_date.isoformat() if scheduled_post.end_date else None,
             next_run_at=scheduled_post.next_run_at.isoformat(),
@@ -495,4 +629,6 @@ async def delete_scheduled_post(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to delete scheduled post"
         )
+
+
 
