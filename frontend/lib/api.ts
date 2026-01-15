@@ -463,9 +463,10 @@ class ApiClient {
     throw new Error('Failed to get OAuth 1.0 authorization URL');
   }
 
-  async getOAuthInitUrl(platform: string, assistantId?: string): Promise<string> {
+  async getOAuthInitUrl(platform: string, assistantId?: string, returnUrl?: string): Promise<string> {
     const params = new URLSearchParams();
     if (assistantId) params.append('assistant_id', assistantId);
+    if (returnUrl) params.append('return_url', returnUrl);
     params.append('redirect', 'false'); // Request JSON response instead of redirect
     const query = params.toString();
     

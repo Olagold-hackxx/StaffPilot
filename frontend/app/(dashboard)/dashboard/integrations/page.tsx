@@ -463,7 +463,9 @@ export default function IntegrationsPage() {
         return
       }
       
-      const url = await apiClient.getOAuthInitUrl(platform, selectedAssistant)
+      // Pass current URL as return URL so OAuth callback returns here
+      const returnUrl = window.location.origin + window.location.pathname
+      const url = await apiClient.getOAuthInitUrl(platform, selectedAssistant, returnUrl)
       globalThis.window.location.href = url
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : "Failed to initiate OAuth"

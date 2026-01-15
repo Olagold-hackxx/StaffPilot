@@ -117,10 +117,9 @@ export default function IntegrationsPage() {
     if (!assistantId) return
 
     try {
-      // Use current URL as base for redirect?
-      // The backend usually handles the redirect URL.
-      // We rely on the standard flow.
-      const url = await apiClient.getOAuthInitUrl(platform, assistantId)
+      // Pass current URL as return URL so OAuth callback returns here
+      const returnUrl = window.location.origin + window.location.pathname
+      const url = await apiClient.getOAuthInitUrl(platform, assistantId, returnUrl)
       window.location.href = url
     } catch (error: any) {
       toast({

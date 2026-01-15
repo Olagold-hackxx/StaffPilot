@@ -284,6 +284,7 @@ async def init_oauth(
     platform: str,
     assistant_id: Optional[UUID] = Query(None),
     redirect: bool = Query(False, description="If true, redirect directly. If false, return JSON with URL."),
+    return_url: Optional[str] = Query(None, description="URL to return to after OAuth completes"),
     current_user: User = Depends(get_current_user),
     current_tenant: Tenant = Depends(get_current_tenant),
     db: AsyncSession = Depends(get_db)
@@ -316,6 +317,7 @@ async def init_oauth(
         "tenant_id": str(current_tenant.id),
         "assistant_id": str(assistant_id) if assistant_id else None,
         "platform": platform,
+        "return_url": return_url,  # Store custom return URL
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     
@@ -587,6 +589,10 @@ async def google_unified_callback(
     tenant_id = UUID(state_data["tenant_id"])
     user_id = UUID(state_data["user_id"])
     assistant_id = UUID(state_data["assistant_id"]) if state_data.get("assistant_id") else None
+    return_url = state_data.get("return_url")  # Get custom return URL
+    
+    # Determine redirect base URL (custom or default)
+    redirect_base = return_url if return_url else f"{frontend_url}/dashboard/integrations"
     
     # Handle Google Drive separately - stores tokens directly on tenant
     if platform == "google_drive":
@@ -611,18 +617,18 @@ async def google_unified_callback(
             redis_client.delete(f"oauth_state_{state}")
             
             return RedirectResponse(
-                url=f"{frontend_url}/dashboard/integrations?success=true&platform=google_drive"
+                url=f"{redirect_base}?success=true&platform=google_drive"
             )
         except Exception as e:
             logger.error(f"Error connecting Google Drive: {e}", exc_info=True)
             return RedirectResponse(
-                url=f"{frontend_url}/dashboard/integrations?success=false&error={str(e)[:100]}"
+                url=f"{redirect_base}?success=false&error={str(e)[:100]}"
             )
     
     if platform not in ["google_ads", "google_analytics", "youtube"]:
         logger.error(f"Google callback received for non-Google platform: {platform}")
         return RedirectResponse(
-            url=f"{frontend_url}/dashboard/integrations?success=false&error=Invalid platform for Google callback"
+            url=f"{redirect_base}?success=false&error=Invalid platform for Google callback"
         )
     
     logger.info(f"Google unified callback for platform: {platform}, tenant: {tenant_id}, assistant_id: {assistant_id}")
@@ -635,7 +641,7 @@ async def google_unified_callback(
     if not config:
         logger.error(f"No config found for platform: {platform}")
         return RedirectResponse(
-            url=f"{frontend_url}/dashboard/integrations?success=false&error=Platform not configured"
+            url=f"{redirect_base}?success=false&error=Platform not configured"
         )
     
     # Use the unified Google redirect URI
@@ -675,14 +681,14 @@ async def google_unified_callback(
         
         logger.info(f"Successfully connected {platform} for tenant {tenant_id}")
         
-        # For YouTube, redirect to workspace if connected from campaign (for now, just use integrations page)
+        # For YouTube, include extra info
         if platform == "youtube":
             return RedirectResponse(
-                url=f"{frontend_url}/dashboard/integrations?success=true&platform=youtube&linked=youtube&channel_id={profile_data.get('channel_id', '')}"
+                url=f"{redirect_base}?success=true&platform=youtube&linked=youtube&channel_id={profile_data.get('channel_id', '')}"
             )
         
         return RedirectResponse(
-            url=f"{frontend_url}/dashboard/integrations?success=true&platform={platform}&integration_id={integration.id}"
+            url=f"{redirect_base}?success=true&platform={platform}&integration_id={integration.id}"
         )
     
     except Exception as e:
@@ -691,7 +697,7 @@ async def google_unified_callback(
         if len(error_message) > 200:
             error_message = error_message[:200] + "..."
         return RedirectResponse(
-            url=f"{frontend_url}/dashboard/integrations?success=false&error={error_message}"
+            url=f"{redirect_base}?success=false&error={error_message}"
         )
 
 
@@ -738,6 +744,10 @@ async def oauth_callback(
     tenant_id = UUID(state_data["tenant_id"])
     user_id = UUID(state_data["user_id"])
     assistant_id = UUID(state_data["assistant_id"]) if state_data.get("assistant_id") else None
+    return_url = state_data.get("return_url")  # Get custom return URL
+    
+    # Determine redirect base URL (custom or default)
+    redirect_base = return_url if return_url else f"{frontend_url}/dashboard/integrations"
     
     # Get integration config
     service = IntegrationService(db)
@@ -745,7 +755,7 @@ async def oauth_callback(
     
     if not config:
         return RedirectResponse(
-            url=f"{frontend_url}/dashboard/integrations?success=false&error=Platform not configured"
+            url=f"{redirect_base}?success=false&error=Platform not configured"
         )
     
     redirect_uri = f"{backend_url}/api/v1/integrations/oauth/{platform}/callback"
@@ -786,7 +796,7 @@ async def oauth_callback(
         
         logger.info(f"Successfully connected {platform} for tenant {tenant_id}")
         return RedirectResponse(
-            url=f"{frontend_url}/dashboard/integrations?success=true&platform={platform}&integration_id={integration.id}"
+            url=f"{redirect_base}?success=true&platform={platform}&integration_id={integration.id}"
         )
     
     except Exception as e:
