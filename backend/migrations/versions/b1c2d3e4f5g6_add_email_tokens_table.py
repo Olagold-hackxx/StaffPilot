@@ -20,16 +20,17 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Create email token type enum
+    # Create email token type enum (checkfirst=True prevents error if it exists)
     emailtokentype = postgresql.ENUM('verify_email', 'reset_password', name='emailtokentype')
     emailtokentype.create(op.get_bind(), checkfirst=True)
     
     # Create email_tokens table
+    # Use create_type=False since we already created the enum above
     op.create_table(
         'email_tokens',
         sa.Column('id', sa.UUID(), nullable=False),
         sa.Column('user_id', sa.UUID(), nullable=False),
-        sa.Column('token_type', sa.Enum('verify_email', 'reset_password', name='emailtokentype'), nullable=False),
+        sa.Column('token_type', postgresql.ENUM('verify_email', 'reset_password', name='emailtokentype', create_type=False), nullable=False),
         sa.Column('token', sa.String(length=255), nullable=False),
         sa.Column('expires_at', sa.DateTime(timezone=True), nullable=False),
         sa.Column('used_at', sa.DateTime(timezone=True), nullable=True),
