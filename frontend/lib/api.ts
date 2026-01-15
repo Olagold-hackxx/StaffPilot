@@ -130,7 +130,18 @@ class ApiClient {
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: response.statusText }));
-      throw new Error(error.detail || `HTTP ${response.status}`);
+      // Handle error detail being an object or string
+      let errorMessage = 'Request failed';
+      if (typeof error.detail === 'string') {
+        errorMessage = error.detail;
+      } else if (typeof error.detail === 'object' && error.detail !== null) {
+        errorMessage = error.detail.message || error.detail.error || JSON.stringify(error.detail);
+      } else if (typeof error.message === 'string') {
+        errorMessage = error.message;
+      } else if (typeof error.error === 'string') {
+        errorMessage = error.error;
+      }
+      throw new Error(errorMessage || `HTTP ${response.status}`);
     }
 
     // Handle 204 No Content responses (DELETE requests)

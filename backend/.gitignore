@@ -46,6 +46,7 @@ env/
 *.pdf
 *.docx
 *.txt
+!requirements.txt
 
 # Logs
 *.log

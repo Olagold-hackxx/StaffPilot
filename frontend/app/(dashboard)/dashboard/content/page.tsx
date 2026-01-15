@@ -769,15 +769,7 @@ export default function ContentPage() {
                           Post ID: {post.post_id.substring(0, 20)}...
                         </p>
                       )}
-                      {post.error && (
-                        <p className="text-xs text-destructive mt-2">
-                          {typeof post.error === 'string' 
-                            ? post.error 
-                            : typeof post.error === 'object' && post.error !== null
-                              ? ((post.error as any).error || (post.error as any).message || JSON.stringify(post.error))
-                              : String(post.error || '')}
-                          </p>
-                        )}
+                      {/* Error hidden from UI - can be viewed in execution history */}
                       {post.images && post.images.length > 0 && (
                         <div className="flex gap-2 mt-3">
                           <Badge variant="outline" className="text-xs">
