@@ -309,7 +309,7 @@ export default function ContentPage() {
         description: "Content approved and queued for publishing",
       })
       // Refresh list
-      fetchData()
+      loadData()
     } catch (error: any) {
       toast({
         title: "Error",
@@ -327,7 +327,7 @@ export default function ContentPage() {
         description: "Content rejected",
       })
       // Refresh list
-      fetchData()
+      loadData()
     } catch (error: any) {
       toast({
         title: "Error",

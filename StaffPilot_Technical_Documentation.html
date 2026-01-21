@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>StaffPilot Technical Documentation</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 40px;
+            line-height: 1.6;
+            color: #333;
+        }
+
+        h1 {
+            color: #1a1a2e;
+            border-bottom: 3px solid #4361ee;
+            padding-bottom: 10px;
+        }
+
+        h2 {
+            color: #1a1a2e;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 8px;
+            margin-top: 40px;
+        }
+
+        h3 {
+            color: #4361ee;
+        }
+
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 20px 0;
+        }
+
+        th,
+        td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+        }
+
+        th {
+            background-color: #4361ee;
+            color: white;
+        }
+
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+
+        code {
+            background-color: #f4f4f4;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Monaco', monospace;
+        }
+
+        pre {
+            background-color: #f4f4f4;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+
+        .summary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+        }
+
+        .warning {
+            background-color: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 12px 15px;
+            margin: 15px 0;
+            border-radius: 0 5px 5px 0;
+        }
+
+        .warning strong {
+            color: #856404;
+        }
+
+        hr {
+            border: none;
+            border-top: 1px solid #eee;
+            margin: 30px 0;
+        }
+
+        @media print {
+            body {
+                padding: 20px;
+            }
+
+            h1 {
+                page-break-before: avoid;
+            }
+
+            h2 {
+                page-break-after: avoid;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <h1>StaffPilot Technical Documentation</h1>
+
+    <div class="summary">
+        <h2 style="color: white; border: none; margin-top: 0;">Executive Summary</h2>
+        <p>StaffPilot is an AI-powered marketing automation platform that enables businesses to create, schedule, and
+            publish content across multiple social media platforms. The platform leverages advanced AI for content
+            generation, image creation, and video production, with integrations to major advertising platforms.</p>
+    </div>
+
+    <h2>1. System Architecture Overview</h2>
+
+    <h3>1.1 Deployment Infrastructure</h3>
+    <table>
+        <tr>
+            <th>Component</th>
+            <th>Platform</th>
+            <th>Notes</th>
+        </tr>
+        <tr>
+            <td><strong>Backend API</strong></td>
+            <td>Railway</td>
+            <td>FastAPI application</td>
+        </tr>
+        <tr>
+            <td><strong>Celery Worker</strong></td>
+            <td>Railway</td>
+            <td>Background task processing</td>
+        </tr>
+        <tr>
+            <td><strong>Celery Beat</strong></td>
+            <td>Railway</td>
+            <td>Scheduled task scheduler</td>
+        </tr>
+        <tr>
+            <td><strong>Frontend</strong></td>
+            <td>Vercel</td>
+            <td>Next.js application</td>
+        </tr>
+        <tr>
+            <td><strong>Database</strong></td>
+            <td>PostgreSQL (Railway)</td>
+            <td>Primary data store</td>
+        </tr>
+        <tr>
+            <td><strong>Redis</strong></td>
+            <td>Railway</td>
+            <td>Task queue & OAuth state storage</td>
+        </tr>
+        <tr>
+            <td><strong>Vector Database</strong></td>
+            <td>Pinecone</td>
+            <td>RAG document embeddings</td>
+        </tr>
+        <tr>
+            <td><strong>Media Storage</strong></td>
+            <td>Cloudinary</td>
+            <td>Images & videos</td>
+        </tr>
+    </table>
+
+    <h3>1.2 Code Repository</h3>
+    <ul>
+        <li><strong>Repository</strong>: GitHub (private)</li>
+        <li><strong>Structure</strong>: Monorepo with backend and frontend directories</li>
+    </ul>
+
+    <hr>
+
+    <h2>2. Social Media Posting Implementation</h2>
+
+    <h3>2.1 LinkedIn Posting ✅ Active</h3>
+    <p><strong>How it works</strong>:</p>
+    <ol>
+        <li><strong>Authentication</strong>: OAuth 2.0 flow via LinkedIn's authorization dialog</li>
+        <li><strong>Token Storage</strong>: Access tokens stored securely with automatic refresh</li>
+        <li><strong>Post Creation</strong>: Uses LinkedIn UGC (User Generated Content) API v2</li>
+        <li><strong>Media Upload</strong>: Supports images and videos via LinkedIn's media upload endpoint</li>
+    </ol>
+    <p><strong>Key Features</strong>: Personal profile and Company Page posting, Image and video attachments, Automatic
+        token refresh</p>
+
+    <h3>2.2 Twitter/X Posting ✅ Active</h3>
+    <p><strong>How it works</strong>:</p>
+    <ol>
+        <li><strong>Authentication</strong>: Dual OAuth system
+            <ul>
+                <li><strong>OAuth 2.0</strong>: For tweet creation (login, posting text)</li>
+                <li><strong>OAuth 1.0a</strong>: Required for media uploads (Twitter API limitation)</li>
+            </ul>
+        </li>
+        <li><strong>Token Management</strong>: Automatic refresh with expiration tracking</li>
+        <li><strong>Post Creation</strong>: Twitter API v2</li>
+        <li><strong>Media Upload</strong>: Twitter Media Upload API v1.1 with chunked upload for large files</li>
+    </ol>
+    <p><strong>Key Features</strong>: Text tweets with images/videos, Automatic token refresh, Chunked upload for videos
+        > 5MB</p>
+
+    <h3>2.3 Facebook Posting</h3>
+    <div class="warning">
+        <strong>⚠️ Status: Pending Meta Developer Setup</strong> - Not active in production yet
+    </div>
+    <p><strong>Authentication</strong>: OAuth 2.0 via Facebook Login dialog</p>
+    <p><strong>API</strong>: Facebook Graph API v18.0 for Page posts (text, photos, videos)</p>
+
+    <h3>2.4 Instagram Posting</h3>
+    <div class="warning">
+        <strong>⚠️ Status: Pending Meta Developer Setup</strong> - Not active in production yet
+    </div>
+    <p><strong>Authentication</strong>: Via Facebook OAuth (Instagram Business accounts linked to Facebook Pages)</p>
+    <p><strong>Post Creation</strong>: Two-step process using Instagram Content Publishing API</p>
+
+    <h3>2.5 TikTok Posting ✅ Active</h3>
+    <p><strong>Authentication</strong>: TikTok OAuth 2.0 with PKCE</p>
+    <p><strong>Features</strong>: Video upload via TikTok Content Posting API with chunked upload</p>
+
+    <hr>
+
+    <h2>3. Content Generation (AI)</h2>
+
+    <h3>3.1 LLM Integration</h3>
+    <table>
+        <tr>
+            <th>Provider</th>
+            <th>Status</th>
+            <th>Capabilities</th>
+        </tr>
+        <tr>
+            <td><strong>Google Gemini</strong></td>
+            <td style="color: green;">✅ Active</td>
+            <td>Content generation, Image generation (Imagen 4), Video generation (Veo 2)</td>
+        </tr>
+        <tr>
+            <td><strong>OpenAI</strong></td>
+            <td style="color: orange;">⚠️ Implemented</td>
+            <td>Not in production use</td>
+        </tr>
+        <tr>
+            <td><strong>Anthropic Claude</strong></td>
+            <td style="color: orange;">⚠️ Implemented</td>
+            <td>Not in production use</td>
+        </tr>
+    </table>
+    <div class="warning">
+        <strong>Note:</strong> Currently only Google Gemini is active in production. OpenAI and Anthropic integrations
+        are implemented and ready but not enabled.
+    </div>
+
+    <h3>3.2 Content Generation Flow</h3>
+    <ol>
+        <li>User provides an optional prompt/request for additional information</li>
+        <li>System uses RAG (Retrieval Augmented Generation) with tenant's documents</li>
+        <li>LLM generates content tailored to brand voice and specific social media platform</li>
+        <li>Content optionally enhanced with AI-generated images/videos</li>
+        <li>Published to selected platforms</li>
+    </ol>
+
+    <h3>3.3 Image Generation</h3>
+    <p><strong>Provider</strong>: Google Gemini with Imagen 4.0 model</p>
+    <p><strong>Features</strong>: Brand asset references for consistency, Multiple aspect ratios, Batch generation</p>
+
+    <h3>3.4 Video Generation</h3>
+    <p><strong>Provider</strong>: Google Gemini with Veo 2 model</p>
+    <p><strong>Features</strong>: 8-60 second videos, Video extension for longer content, Brand asset integration</p>
+
+    <hr>
+
+    <h2>4. Campaign Creation</h2>
+    <p><strong>AI-Powered Campaign Planning</strong>:</p>
+    <ol>
+        <li>User provides campaign objectives, target audience, channels, budget</li>
+        <li>AI researches market using:
+            <ul>
+                <li><strong>RAG</strong>: Searches tenant's uploaded documents</li>
+                <li><strong>SERP API</strong>: Real-time market/competitor research</li>
+            </ul>
+        </li>
+        <li>AI generates structured campaign plan with timeline, budget allocation, ad sets</li>
+        <li>Plan presented for user approval</li>
+    </ol>
+
+    <p><strong>Asset Generation</strong>:</p>
+    <ul>
+        <li>Headlines (short: 30 chars, long: 90 chars)</li>
+        <li>Descriptions (90 chars)</li>
+        <li>Images (various dimensions)</li>
+        <li>Videos (8-60 seconds)</li>
+    </ul>
+
+    <hr>
+
+    <h2>5. Background Workers (Celery)</h2>
+    <table>
+        <tr>
+            <th>Worker</th>
+            <th>Purpose</th>
+        </tr>
+        <tr>
+            <td>Campaign Creation</td>
+            <td>Generate campaign assets (headlines, descriptions, images, videos)</td>
+        </tr>
+        <tr>
+            <td>Content Creation</td>
+            <td>Create and publish social media content</td>
+        </tr>
+        <tr>
+            <td>Scheduled Posts</td>
+            <td>Execute scheduled content automation</td>
+        </tr>
+        <tr>
+            <td>Document Ingestion</td>
+            <td>Process uploaded documents for RAG</td>
+        </tr>
+        <tr>
+            <td>Notifications</td>
+            <td>Send email notifications</td>
+        </tr>
+    </table>
+
+    <hr>
+
+    <h2>6. Third-Party Services</h2>
+    <table>
+        <tr>
+            <th>Service</th>
+            <th>Purpose</th>
+            <th>Status</th>
+        </tr>
+        <tr>
+            <td><strong>Google Cloud</strong></td>
+            <td>Gemini AI, Google Ads API</td>
+            <td>✅ Active</td>
+        </tr>
+        <tr>
+            <td><strong>Cloudinary</strong></td>
+            <td>Media storage & CDN</td>
+            <td>✅ Active</td>
+        </tr>
+        <tr>
+            <td><strong>Pinecone</strong></td>
+            <td>Vector database for RAG</td>
+            <td>✅ Active</td>
+        </tr>
+        <tr>
+            <td><strong>Redis</strong></td>
+            <td>Task queue, caching</td>
+            <td>✅ Active</td>
+        </tr>
+        <tr>
+            <td><strong>Railway</strong></td>
+            <td>Backend hosting</td>
+            <td>✅ Active</td>
+        </tr>
+        <tr>
+            <td><strong>Vercel</strong></td>
+            <td>Frontend hosting</td>
+            <td>✅ Active</td>
+        </tr>
+        <tr>
+            <td><strong>SerpAPI</strong></td>
+            <td>SEO & market research</td>
+            <td>✅ Active</td>
+        </tr>
+        <tr>
+            <td><strong>Meta (Facebook/Instagram)</strong></td>
+            <td>Social posting</td>
+            <td>⚠️ Pending setup</td>
+        </tr>
+    </table>
+
+    <hr>
+
+    <h2>7. OAuth Integrations</h2>
+    <p><strong>For Social Media Posting</strong>: Each user connects their own accounts via OAuth. The platform stores
+        access tokens (encrypted), refresh tokens, token expiration times, and selected pages/profiles.</p>
+    <p><strong>For Deployment</strong>: Railway (backend services), Vercel (frontend), GitHub (code repository)</p>
+
+    <hr>
+
+    <h2>8. Data Flow Summary</h2>
+    <pre>
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│   User      │────▶│  Frontend   │────▶│  Backend    │
+│  (Browser)  │     │  (Vercel)   │     │  (Railway)  │
+└─────────────┘     └─────────────┘     └─────────────┘
+                                               │
+                    ┌──────────────────────────┼──────────────────────────┐
+                    ▼                          ▼                          ▼
+             ┌─────────────┐          ┌─────────────┐           ┌─────────────┐
+             │  PostgreSQL │          │   Redis     │           │  Celery     │
+             │  (Railway)  │          │  (Railway)  │           │  Workers    │
+             └─────────────┘          └─────────────┘           └─────────────┘
+                                                                       │
+                    ┌──────────────────────────────────────────────────┘
+                    ▼                          ▼                          ▼
+             ┌─────────────┐          ┌─────────────┐           ┌─────────────┐
+             │  Pinecone   │          │  Cloudinary │           │  Social     │
+             │  (Vector DB)│          │  (Media)    │           │  APIs       │
+             └─────────────┘          └─────────────┘           └─────────────┘
+    </pre>
+
+    <hr>
+    <p style="text-align: center; color: #666; font-size: 12px;"><em>Document generated: January 2026 | For internal use
+            by StaffPilot founding team</em></p>
+</body>
+
+</html>
