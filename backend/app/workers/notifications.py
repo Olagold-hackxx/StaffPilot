@@ -196,3 +196,48 @@ def send_webhook(url: str, payload: dict):
     except Exception as e:
         logger.error(f"Failed to send webhook to {url}: {str(e)}")
         raise
+
+
+@celery_app.task(name="send_content_approval_email")
+def send_content_approval_email(
+    to: str, 
+    user_name: str, 
+    platform: str, 
+    content_preview: str,
+    content_count: int = 1
+):
+    """
+    Send content approval request email via Celery.
+    """
+    import asyncio
+    from app.services.email_service import get_email_service_instance
+    
+    logger.info(f"Sending content approval email to {to} for {platform}")
+    
+    try:
+        email_service = get_email_service_instance()
+        
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            result = loop.run_until_complete(
+                email_service.send_content_approval_email(
+                    to=to, 
+                    user_name=user_name, 
+                    platform=platform, 
+                    content_preview=content_preview,
+                    content_count=content_count
+                )
+            )
+        finally:
+            loop.close()
+        
+        if result:
+            logger.info(f"Content approval email sent to {to}")
+        else:
+            logger.error(f"Failed to send content approval email to {to}")
+        
+        return result
+    except Exception as e:
+        logger.error(f"Error sending content approval email: {str(e)}")
+        raise

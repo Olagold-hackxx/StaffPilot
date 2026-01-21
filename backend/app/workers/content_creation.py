@@ -1628,6 +1628,42 @@ def execute_content_creation(
                     posting_failed = 0
                     posting_skipped = 0
                     
+                    # Send approval notification email to tenant admins
+                    try:
+                        from app.models.user import User, UserRole
+                        from app.workers.notifications import send_content_approval_email
+                        
+                        # Get admin users for this tenant
+                        admin_users_result = db.execute(
+                            select(User).where(
+                                User.tenant_id == UUID(tenant_id),
+                                User.role == UserRole.ADMIN,
+                                User.is_active == True
+                            )
+                        )
+                        admin_users = admin_users_result.scalars().all()
+                        
+                        if admin_users:
+                            # Build summary for email
+                            platforms_list = ", ".join([item["platform"] for item in created_content_items])
+                            first_content = created_content_items[0]["content"] if created_content_items else "Content awaiting approval"
+                            
+                            for admin in admin_users:
+                                # Queue email notification via Celery
+                                send_content_approval_email.delay(
+                                    to=admin.email,
+                                    user_name=admin.full_name or "",
+                                    platform=platforms_list,
+                                    content_preview=first_content,
+                                    content_count=len(created_content_items)
+                                )
+                                logger.info(f"[TASK 5/6] 📧 Approval notification queued for {admin.email}")
+                        else:
+                            logger.warning(f"[TASK 5/6] No admin users found for tenant {tenant_id} to notify about pending approval")
+                    except Exception as email_error:
+                        # Don't fail the task if email fails
+                        logger.error(f"[TASK 5/6] Failed to send approval notification: {str(email_error)}")
+                    
                 else:
                     # Normal flow - post to platforms immediately
                     logger.info("[TASK 5/6] Starting platform posting...")

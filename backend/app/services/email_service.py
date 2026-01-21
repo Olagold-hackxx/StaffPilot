@@ -183,6 +183,26 @@ class EmailTemplates:
         </p>
         """
         return cls._base_template(content, "Welcome to StaffPilot!")
+    
+    @classmethod
+    def content_approval_request(cls, user_name: str, platform: str, content_preview: str, approval_url: str, content_count: int = 1) -> str:
+        """Content approval request template"""
+        content = f"""
+        <h2>Content Awaiting Your Approval 📝</h2>
+        <p>Hi{' ' + user_name if user_name else ''},</p>
+        <p>New content has been generated and is waiting for your approval before publishing.</p>
+        <div style="background-color: #f3f4f6; padding: 15px; border-radius: 8px; margin: 20px 0;">
+            <p style="margin: 0 0 10px 0;"><strong>Platform{'s' if content_count > 1 else ''}:</strong> {platform}</p>
+            <p style="margin: 0 0 10px 0;"><strong>Items pending:</strong> {content_count}</p>
+            <p style="margin: 0;"><strong>Preview:</strong></p>
+            <p style="color: #666; font-style: italic; margin-top: 5px;">"{content_preview}"</p>
+        </div>
+        <p style="text-align: center;">
+            <a href="{approval_url}" class="button">Review & Approve Content</a>
+        </p>
+        <p style="color: #666; font-size: 14px;">You can approve, edit, or reject this content from your dashboard.</p>
+        """
+        return cls._base_template(content, "Content Awaiting Approval - StaffPilot")
 
 
 class BaseEmailService(ABC):
@@ -239,6 +259,32 @@ class BaseEmailService(ABC):
             subject="Welcome to StaffPilot! 🎉",
             html_content=html_content,
             plain_content=f"Welcome to StaffPilot! Visit {settings.FRONTEND_URL}/dashboard to get started."
+        )
+        return await self.send(message)
+    
+    async def send_content_approval_email(
+        self, 
+        to: str, 
+        user_name: str, 
+        platform: str, 
+        content_preview: str,
+        content_count: int = 1
+    ) -> bool:
+        """Send content approval request email"""
+        approval_url = f"{settings.FRONTEND_URL}/dashboard/content"
+        html_content = EmailTemplates.content_approval_request(
+            user_name=user_name,
+            platform=platform,
+            content_preview=content_preview,
+            approval_url=approval_url,
+            content_count=content_count
+        )
+        
+        message = EmailMessage(
+            to=to,
+            subject=f"Content Awaiting Approval - {platform} - StaffPilot",
+            html_content=html_content,
+            plain_content=f"New content for {platform} is awaiting your approval. Review it at: {approval_url}"
         )
         return await self.send(message)
 
