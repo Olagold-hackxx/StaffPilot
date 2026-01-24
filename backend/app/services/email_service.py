@@ -335,13 +335,7 @@ class SendGridEmailService(BaseEmailService):
 
 class GmailEmailService(BaseEmailService):
     """
-    Gmail SMTP email service - great for development.
-    
-    Requirements:
-    1. Enable 2-Factor Authentication on your Google account
-    2. Generate an App Password: https://myaccount.google.com/apppasswords
-    3. Set SMTP_USERNAME to your Gmail address
-    4. Set SMTP_PASSWORD to the App Password (not your regular password)
+    Gmail SMTP email service 
     """
     
     def __init__(self):
@@ -354,13 +348,13 @@ class GmailEmailService(BaseEmailService):
             logger.warning("Gmail SMTP credentials not configured (SMTP_USERNAME, SMTP_PASSWORD)")
     
     async def send(self, message: EmailMessage) -> bool:
-        """Send email via Gmail SMTP"""
+        """Send email via Gmail SMTP using aiosmtplib"""
         if not self.username or not self.password:
             logger.error("Gmail SMTP credentials not configured")
             return False
         
         try:
-            import smtplib
+            import aiosmtplib
             from email.mime.text import MIMEText
             from email.mime.multipart import MIMEMultipart
             
@@ -378,29 +372,30 @@ class GmailEmailService(BaseEmailService):
                 msg.attach(MIMEText(message.plain_content, "plain"))
             msg.attach(MIMEText(message.html_content, "html"))
             
-            # Send via Gmail SMTP
-            with smtplib.SMTP(self.smtp_host, self.smtp_port) as server:
-                server.starttls()
-                server.login(self.username, self.password)
-                server.sendmail(
-                    self.username,  # Gmail requires sender to be the authenticated user
-                    message.to,
-                    msg.as_string()
-                )
+            # Send via Gmail SMTP using aiosmtplib
+            await aiosmtplib.send(
+                msg,
+                hostname=self.smtp_host,
+                port=self.smtp_port,
+                start_tls=True,
+                username=self.username,
+                password=self.password,
+            )
             
             logger.info(f"Email sent successfully via Gmail to {message.to}")
             return True
             
-        except smtplib.SMTPAuthenticationError as e:
-            logger.error(f"Gmail SMTP authentication failed. Make sure you're using an App Password: {str(e)}")
-            return False
         except Exception as e:
-            logger.error(f"Failed to send email via Gmail SMTP: {str(e)}")
+            error_msg = str(e)
+            if "authentication" in error_msg.lower() or "smtpauthentication" in error_msg.lower():
+                logger.error(f"Gmail SMTP authentication failed. Make sure you're using an App Password: {error_msg}")
+            else:
+                logger.error(f"Failed to send email via Gmail SMTP: {error_msg}")
             return False
 
 
 class SMTPEmailService(BaseEmailService):
-    """Generic SMTP email service - works with any SMTP server"""
+    """Generic SMTP email service using aiosmtplib - works with any SMTP server"""
     
     def __init__(self):
         self.smtp_host = settings.SMTP_HOST
@@ -413,13 +408,13 @@ class SMTPEmailService(BaseEmailService):
             logger.warning("SMTP configuration incomplete (SMTP_HOST, SMTP_PORT required)")
     
     async def send(self, message: EmailMessage) -> bool:
-        """Send email via SMTP"""
+        """Send email via SMTP using aiosmtplib"""
         if not self.smtp_host or not self.smtp_port:
             logger.error("SMTP configuration incomplete")
             return False
         
         try:
-            import smtplib
+            import aiosmtplib
             from email.mime.text import MIMEText
             from email.mime.multipart import MIMEMultipart
             
@@ -437,17 +432,15 @@ class SMTPEmailService(BaseEmailService):
                 msg.attach(MIMEText(message.plain_content, "plain"))
             msg.attach(MIMEText(message.html_content, "html"))
             
-            # Send via SMTP
-            with smtplib.SMTP(self.smtp_host, self.smtp_port) as server:
-                if self.use_tls:
-                    server.starttls()
-                if self.username and self.password:
-                    server.login(self.username, self.password)
-                server.sendmail(
-                    message.from_email,
-                    message.to,
-                    msg.as_string()
-                )
+            # Send via SMTP using aiosmtplib
+            await aiosmtplib.send(
+                msg,
+                hostname=self.smtp_host,
+                port=self.smtp_port,
+                start_tls=self.use_tls,
+                username=self.username if self.username else None,
+                password=self.password if self.password else None,
+            )
             
             logger.info(f"Email sent successfully via SMTP to {message.to}")
             return True

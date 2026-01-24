@@ -703,7 +703,7 @@ Return your response as valid JSON only. Do not include any markdown formatting 
         try:
             import time
             
-            model_name = self.video_model_name or "veo-3.1-generate-preview"
+            model_name = self.video_model_name or "veo3.1"
             logger.info(f"[SYNC] Generating video with {model_name}, duration: {duration_seconds}s")
             
             # Check if video generation is available
@@ -808,7 +808,7 @@ Return your response as valid JSON only. Do not include any markdown formatting 
         try:
             import time
             
-            model_name = self.video_model_name or "veo-3.1-generate-preview"
+            model_name = self.video_model_name or "veo3.1"
             logger.info(f"[SYNC] Generating video with {len(reference_images)} reference images")
             
             # Check if video generation is available
@@ -965,7 +965,7 @@ Return your response as valid JSON only. Do not include any markdown formatting 
             import time
             from google.genai import types
             
-            model_name = self.video_model_name or "veo-3.1-generate-preview"
+            model_name = self.video_model_name or "veo3.1"
             logger.info(f"[SYNC] Extending video with prompt: {prompt[:100]}...")
             
             # Start video extension using the video parameter
@@ -1073,7 +1073,7 @@ Return your response as valid JSON only. Do not include any markdown formatting 
             # Clamp duration to valid range
             target_duration_seconds = max(8, min(60, target_duration_seconds))
             
-            model_name = self.video_model_name or "veo-3.1-generate-preview"
+            model_name = self.video_model_name or "veo3.1"
             logger.info(f"[SYNC] Generating extended video: target={target_duration_seconds}s, refs={len(reference_images or [])}")
             
             # Step 1: Generate initial video and get the video object for chaining

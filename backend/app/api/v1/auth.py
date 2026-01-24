@@ -222,7 +222,7 @@ async def resend_verification(
     # Create new verification token
     new_token = EmailToken.create_verification_token(
         user_id=user.id,
-        expire_hours=settings.EMAIL_VERIFICATION_EXPIRE_HOURS
+        expire_minutes=settings.EMAIL_VERIFICATION_EXPIRE_MINUTES
     )
     db.add(new_token)
     await db.commit()
@@ -231,7 +231,7 @@ async def resend_verification(
     send_verification_email.delay(
         to=user.email,
         user_name=user.full_name or "",
-        token=new_token.token
+        otp_code=new_token.token
     )
     logger.info(f"Verification email resent to: {user.email}")
     

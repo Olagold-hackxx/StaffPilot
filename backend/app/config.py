@@ -89,9 +89,9 @@ class Settings(BaseSettings):
     
     # Email Configuration
     EMAIL_PROVIDER: str = "console"  # Options: gmail, smtp, sendgrid, console
-    EMAIL_FROM_ADDRESS: str = "noreply@staffpilot.app"
+    EMAIL_FROM_ADDRESS: str = "noreply@usestaffpilot.com"
     EMAIL_FROM_NAME: str = "StaffPilot"
-    EMAIL_VERIFICATION_EXPIRE_HOURS: int = 24
+    EMAIL_VERIFICATION_EXPIRE_MINUTES: int = 10  # OTP expires in 10 minutes
     PASSWORD_RESET_EXPIRE_HOURS: int = 1
     
     # SMTP Configuration (for gmail or smtp provider)
