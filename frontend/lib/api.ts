@@ -588,6 +588,7 @@ class ApiClient {
     include_images: boolean;
     include_video: boolean;
     requires_approval?: boolean;
+    brand_asset_ids?: string[];
     start_date: string;
     end_date?: string;
   }) {
