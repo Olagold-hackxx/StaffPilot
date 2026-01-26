@@ -81,115 +81,258 @@ def retrieve_rag_context(
 
 def _generate_image_prompt(
     platform: str,
-    content: str
+    content: str,
+    company_name: Optional[str] = None,
+    brand_voice: Optional[str] = None,
+    target_audience: Optional[str] = None,
+    rag_context: Optional[str] = None
 ) -> str:
     """
-    Generate image prompt in the format: 
-    "Generate a suitable image to post along with below content in [platform] -- [content]"
+    Generate image prompt with brand context for accurate text rendering.
     
     Args:
         platform: Social media platform name (e.g., "LinkedIn", "Twitter", "Facebook")
         content: The generated social media content
+        company_name: Optional company/brand name (CRITICAL for text in images)
+        brand_voice: Optional brand voice/tone
+        target_audience: Optional target audience description
+        rag_context: Optional RAG-retrieved context with product/service info
     
     Returns:
-        Formatted image prompt string
+        Formatted image prompt string with brand context
     """
-    # Format: "Generate a suitable image to post along with below content in [platform] -- [content]"
-    image_prompt = f"Generate a suitable image to post along with below content in {platform} -- {content}. IMPORTANT: Ensure all text in the image is in English and free of spelling mistakes."
+    # Build brand context section
+    brand_context = ""
+    if company_name:
+        brand_context += f"\n- COMPANY/BRAND NAME: {company_name} (use this EXACT spelling if including brand name in image)"
+    if brand_voice:
+        brand_context += f"\n- Brand voice/style: {brand_voice}"
+    if target_audience:
+        brand_context += f"\n- Target audience: {target_audience}"
+    
+    if brand_context:
+        brand_section = f"\n\nBRAND CONTEXT (follow these guidelines):{brand_context}\n"
+    else:
+        brand_section = ""
+    
+    # Add RAG context for product/service names and details
+    rag_section = ""
+    if rag_context:
+        # Limit to first 800 chars to avoid overly long prompts
+        rag_excerpt = rag_context[:800].strip()
+        if len(rag_context) > 800:
+            rag_excerpt += "..."
+        rag_section = f"""
+
+REFERENCE INFORMATION (use for accurate product/service names and terminology):
+{rag_excerpt}
+"""
+    
+    image_prompt = f"""Generate a professional, visually appealing image for {platform} to accompany this content:
+
+{content}
+{brand_section}{rag_section}
+CRITICAL REQUIREMENTS:
+1. All text in the image MUST be in English with CORRECT spelling
+2. If including any company/brand name, use the EXACT spelling provided above
+3. If mentioning products/services, use the EXACT names from the reference information
+4. Keep text minimal and impactful - avoid cluttering the image
+5. Make the design professional and suitable for {platform}
+6. Ensure high contrast and readability if text is included"""
+    
     return image_prompt
 
 
 def _generate_video_prompt(
     platform: str,
-    content: str
+    content: str,
+    company_name: Optional[str] = None,
+    brand_voice: Optional[str] = None,
+    target_audience: Optional[str] = None,
+    rag_context: Optional[str] = None
 ) -> str:
     """
-    Generate a storytelling, film-like short ad prompt tied to the social content.
-    Format:
-    "Create a short, cinematic, story-driven ad for [platform], based on this post. 
-    Make it intriguing with a hook and a cliffhanger so viewers want to know what happens next. 
-    Keep it tightly aligned to the post content. -- [content]"
+    Generate a storytelling, film-like short ad prompt with brand context.
     
     Args:
         platform: Social media platform name (e.g., "LinkedIn", "Twitter", "Facebook")
         content: The generated social media content
+        company_name: Optional company/brand name (CRITICAL for text in video)
+        brand_voice: Optional brand voice/tone
+        target_audience: Optional target audience description
+        rag_context: Optional RAG-retrieved context with product/service info
     
     Returns:
-        Formatted video prompt string
+        Formatted video prompt string with brand context
     """
-    video_prompt = (
-        "Create a short, cinematic, story-driven ad for "
-        f"{platform}. Base it on this post so the visuals and narrative stay aligned. "
-        "Open with a strong hook, build intrigue, and end on a cliffhanger that makes viewers want to know what happens next. "
-        f"Here is the post to align with: {content}\n\n"
-        "IMPORTANT: Ensure all text in the video is in English and free of spelling mistakes."
-        "IMPORTANT: Ensure the people in the video speak english and NO SUBTITLES"
-    )
+    # Build brand context section
+    brand_context = ""
+    if company_name:
+        brand_context += f"\n- COMPANY/BRAND NAME: {company_name} (use this EXACT spelling in any text/graphics)"
+    if brand_voice:
+        brand_context += f"\n- Brand voice/style: {brand_voice}"
+    if target_audience:
+        brand_context += f"\n- Target audience: {target_audience}"
+    
+    if brand_context:
+        brand_section = f"\n\nBRAND CONTEXT (follow these guidelines):{brand_context}\n"
+    else:
+        brand_section = ""
+    
+    # Add RAG context for product/service names and details
+    rag_section = ""
+    if rag_context:
+        # Limit to first 600 chars for video prompts
+        rag_excerpt = rag_context[:600].strip()
+        if len(rag_context) > 600:
+            rag_excerpt += "..."
+        rag_section = f"""
+
+REFERENCE INFORMATION (use for accurate product/service names):
+{rag_excerpt}
+"""
+    
+    video_prompt = f"""Create a short, cinematic, story-driven video ad for {platform}.
+
+BASE CONTENT:
+{content}
+{brand_section}{rag_section}
+VIDEO REQUIREMENTS:
+1. Open with a strong hook, build intrigue, end with a cliffhanger
+2. Keep visuals and narrative aligned with the post content
+3. All text/graphics in the video MUST be in English with CORRECT spelling
+4. If showing company/brand name, use the EXACT spelling provided above
+5. If mentioning products/services, use EXACT names from reference info
+6. People speaking should use English - NO SUBTITLES
+7. Professional quality suitable for {platform}"""
+    
     return video_prompt
 
 
-def _fetch_brand_asset_bytes(tenant_id: str, limit: int = 5) -> List[bytes]:
+def _fetch_brand_asset_bytes(
+    tenant_id: str, 
+    asset_ids: Optional[List[str]] = None,
+    include_logo: bool = True,
+    max_random: int = 2
+) -> List[bytes]:
     """
-    Fetch brand asset image bytes for a tenant.
-    Used to provide reference images for AI generation.
+    Fetch brand asset image bytes for AI generation with smart selection.
+    
+    Priority:
+    1. Always include logo asset (is_logo=True) if include_logo=True
+    2. Include user-selected assets (asset_ids)
+    3. If no user selection, randomly pick up to max_random assets
     
     Args:
         tenant_id: Tenant UUID string
-        limit: Maximum number of assets to fetch (default 5)
+        asset_ids: Optional list of specific asset IDs to fetch (user selection)
+        include_logo: Whether to always include the logo asset
+        max_random: Max number of assets to randomly select if no user selection
     
     Returns:
-        List of image bytes
+        List of image bytes (max 3 total)
     """
     from app.db.session import create_worker_session_factory
     from app.models.brand_asset import BrandAsset
-    from app.services.storage import get_storage
     from sqlalchemy import select
+    from sqlalchemy.sql.expression import func as sql_func
     import httpx
+    import random
     
     SessionFactory = create_worker_session_factory()
     db = SessionFactory()
     
     try:
-        # Fetch image-type brand assets for this tenant
-        result = db.execute(
-            select(BrandAsset)
-            .where(BrandAsset.tenant_id == UUID(tenant_id))
-            .where(BrandAsset.asset_type == "image")
-            .where(BrandAsset.is_active == True)
-            .order_by(BrandAsset.usage_count.desc())  # Prioritize frequently used assets
-            .limit(limit)
-        )
-        assets = result.scalars().all()
+        selected_assets = []
+        logo_asset = None
         
-        if not assets:
-            logger.info(f"No brand assets found for tenant {tenant_id}")
+        # Step 1: Fetch logo asset if requested
+        if include_logo:
+            logo_result = db.execute(
+                select(BrandAsset)
+                .where(BrandAsset.tenant_id == UUID(tenant_id))
+                .where(BrandAsset.asset_type == "image")
+                .where(BrandAsset.is_active == True)
+                .where(BrandAsset.is_logo == True)
+                .limit(1)
+            )
+            logo_asset = logo_result.scalar_one_or_none()
+            if logo_asset:
+                selected_assets.append(logo_asset)
+                logger.info(f"[BrandAssets] Found logo asset: {logo_asset.name}")
+        
+        # Step 2: Fetch user-selected assets (if provided)
+        if asset_ids:
+            for asset_id in asset_ids:
+                if len(selected_assets) >= 3:  # Max 3 total
+                    break
+                # Skip if this is already the logo
+                if logo_asset and str(logo_asset.id) == asset_id:
+                    continue
+                
+                asset_result = db.execute(
+                    select(BrandAsset).where(
+                        BrandAsset.id == UUID(asset_id),
+                        BrandAsset.tenant_id == UUID(tenant_id),
+                        BrandAsset.is_active == True,
+                        BrandAsset.asset_type == "image"
+                    )
+                )
+                asset = asset_result.scalar_one_or_none()
+                if asset:
+                    selected_assets.append(asset)
+                    logger.info(f"[BrandAssets] Added user-selected asset: {asset.name}")
+        
+        # Step 3: If no user selection, randomly pick additional assets
+        elif len(selected_assets) < 3:
+            remaining_slots = min(max_random, 3 - len(selected_assets))
+            
+            # Get all available assets (excluding logo)
+            exclude_ids = [logo_asset.id] if logo_asset else []
+            available_result = db.execute(
+                select(BrandAsset)
+                .where(BrandAsset.tenant_id == UUID(tenant_id))
+                .where(BrandAsset.asset_type == "image")
+                .where(BrandAsset.is_active == True)
+                .where(BrandAsset.is_logo == False)  # Exclude logo (already added)
+                .order_by(sql_func.random())  # Random order
+                .limit(remaining_slots)
+            )
+            random_assets = available_result.scalars().all()
+            
+            for asset in random_assets:
+                if asset.id not in exclude_ids:
+                    selected_assets.append(asset)
+                    logger.info(f"[BrandAssets] Randomly selected: {asset.name}")
+        
+        if not selected_assets:
+            logger.info(f"[BrandAssets] No brand assets found for tenant {tenant_id}")
             return []
         
-        logger.info(f"Found {len(assets)} brand assets for tenant {tenant_id}")
+        logger.info(f"[BrandAssets] Selected {len(selected_assets)} assets for AI generation")
         
         # Download image bytes from storage
         asset_bytes = []
-        for asset in assets:
+        for asset in selected_assets:
             try:
                 if asset.url:
-                    # Download from URL using httpx (sync)
                     with httpx.Client(timeout=30.0) as client:
                         response = client.get(asset.url)
                         if response.status_code == 200:
                             asset_bytes.append(response.content)
-                            logger.info(f"Fetched brand asset: {asset.name} ({len(response.content)} bytes)")
+                            logger.info(f"[BrandAssets] Fetched: {asset.name} ({len(response.content)} bytes)")
                             
                             # Update usage count
                             asset.usage_count = (asset.usage_count or 0) + 1
             except Exception as e:
-                logger.warning(f"Failed to fetch brand asset {asset.id}: {e}")
+                logger.warning(f"[BrandAssets] Failed to fetch {asset.id}: {e}")
                 continue
         
         db.commit()
         return asset_bytes
         
     except Exception as e:
-        logger.error(f"Error fetching brand assets: {e}")
+        logger.error(f"[BrandAssets] Error fetching brand assets: {e}")
         return []
     finally:
         db.close()
@@ -199,7 +342,8 @@ async def _generate_image_async(
     prompt: str,
     aspect_ratio: str = "1:1",
     number_of_images: int = 1,
-    tenant_id: Optional[str] = None
+    tenant_id: Optional[str] = None,
+    brand_asset_ids: Optional[List[str]] = None  # User-selected brand assets
 ) -> Dict[str, Any]:
     """
     Async helper function to generate images using AI.
@@ -210,6 +354,7 @@ async def _generate_image_async(
         aspect_ratio: Image aspect ratio
         number_of_images: Number of images to generate
         tenant_id: Optional tenant ID to fetch brand assets for references
+        brand_asset_ids: Optional list of specific brand asset IDs to use
     
     Returns:
         Dict with success, images, and count
@@ -218,10 +363,15 @@ async def _generate_image_async(
     
     llm_service = create_llm_service()
     
-    # Fetch brand assets for reference images if tenant_id provided
+    # Fetch brand assets for reference images (smart selection)
     reference_images = []
     if tenant_id:
-        reference_images = _fetch_brand_asset_bytes(tenant_id, limit=5)
+        reference_images = _fetch_brand_asset_bytes(
+            tenant_id=tenant_id,
+            asset_ids=brand_asset_ids,  # User-selected (or None for random)
+            include_logo=True,  # Always include logo
+            max_random=2  # Max 2 random if no selection
+        )
         if reference_images:
             logger.info(f"Using {len(reference_images)} brand assets as reference images for generation")
     
@@ -450,15 +600,21 @@ def _generate_content_direct(
         brand_voice = tenant.brand_voice or "professional"
         target_audience = tenant.target_audience or ""
         offerings = tenant.offerings or ""
+        company_name = tenant.name or ""
+        website_url = tenant.website_url or ""
         
         system_prompt = f"""You are a Digital Marketing Assistant. Your job is to create engaging, platform-appropriate social media content.
 
 Brand Guidelines:
+- Company Name: {company_name}
 - Voice & Tone: {brand_voice}
 - Target Audience: {target_audience}
 - Products/Services: {offerings}
+{f"- Website: {website_url}" if website_url else ""}
 
-IMPORTANT: Generate ONE single, final post that is ready to publish immediately. Do NOT provide multiple options, variations, or alternatives. Do NOT include labels like "Option 1", "Option 2", "Headline:", "Body:", "Call to Action:" - just write the complete post content as it should appear when published. Do not explain your process or steps - just return the final, ready-to-post content."""
+IMPORTANT: Generate ONE single, final post that is ready to publish immediately. Do NOT provide multiple options, variations, or alternatives. Do NOT include labels like "Option 1", "Option 2", "Headline:", "Body:", "Call to Action:" - just write the complete post content as it should appear when published. Do not explain your process or steps - just return the final, ready-to-post content.
+
+CRITICAL: NEVER use placeholder text like "[Your Website Link Here]", "[Link in Bio]", "[Product Name]", etc. Instead, use the actual company website ({website_url}) and actual product/service names provided above. If a website URL should appear in the content, always use the exact URL: {website_url}"""
         
         # Build platform-specific instructions
         platform_instruction = ""
@@ -472,9 +628,6 @@ IMPORTANT: Generate ONE single, final post that is ready to publish immediately.
             }
             if platform.lower() in platform_guidelines:
                 platform_instruction = f"\n\nPlatform Requirements: {platform_guidelines[platform.lower()]}"
-        
-        # Get website URL from tenant
-        website_url = tenant.website_url or ""
         
         # Build user prompt
         user_prompt = request
@@ -491,9 +644,9 @@ IMPORTANT: Generate ONE single, final post that is ready to publish immediately.
             if keyword_results.get("seed_keyword"):
                 user_prompt += f"\nPrimary Topic: {keyword_results.get('seed_keyword')}"
         
-        # Add website URL instruction
+        # Add website URL instruction (reinforced from system prompt)
         if website_url:
-            user_prompt += f"\n\nIMPORTANT: Include the website URL ({website_url}) in the content where appropriate (e.g., in call-to-action, links, etc.)."
+            user_prompt += f"\n\nREMINDER: When including links or call-to-actions, use the actual website: {website_url}"
         
         # Add platform instruction
         if platform_instruction:
@@ -932,10 +1085,17 @@ async def _post_to_social_platform_async(
         # Posting services are synchronous, so run them in a thread
         if platform == "facebook":
             page_id = integration_data.get("page_id")
-            logger.info(f"[{platform}] Required params - page_id: {page_id}, access_token: {'present' if access_token else 'missing'}")
+            
+            # Facebook API ONLY supports Page posting - personal account posting via API was deprecated
+            # The publish_actions permission was removed. Users MUST connect a Facebook Page.
             if not page_id:
-                logger.error(f"[{platform}] Missing required parameter: page_id")
-                return {"success": False, "error": "Facebook page_id not found"}
+                logger.error(f"[{platform}] No Facebook Page configured. Personal account posting is not supported by Facebook API.")
+                return {
+                    "success": False, 
+                    "error": "Facebook requires a Page to post via API. Personal profile posting is not supported. Please connect a Facebook Page in Integrations settings."
+                }
+            
+            logger.info(f"[{platform}] Required params - page_id: {page_id}, access_token: {'present' if access_token else 'missing'}")
             if not access_token:
                 logger.error(f"[{platform}] Missing required parameter: access_token")
                 return {"success": False, "error": "Facebook access_token not found"}
@@ -946,7 +1106,8 @@ async def _post_to_social_platform_async(
                 content=cleaned_content,
                 access_token=access_token,
                 page_id=page_id,
-                media_urls=media_urls
+                media_urls=media_urls,
+                is_personal_account=False  # Always False - only Pages supported
             )
             logger.info(f"[{platform}] Facebook post completed: success={post_result.get('success')}")
             return post_result
@@ -1246,6 +1407,7 @@ def execute_content_creation(
                 platforms = request_data.get("platforms", [])
                 include_images = request_data.get("include_images", False)
                 include_video = request_data.get("include_video", False)
+                brand_asset_ids = request_data.get("brand_asset_ids", None)  # User-selected brand assets
                 
                 # Task tracking for logging
                 tasks = []
@@ -1451,27 +1613,52 @@ def execute_content_creation(
                         # Format platform name nicely (capitalize first letter)
                         platform_name = first_platform.capitalize() if first_platform else "Social media"
                         
-                        # Generate image prompt in the format: 
-                        # "Generate a suitable image to post along with below content in [platform] -- [content]"
+                        # Fetch tenant info for brand context in image generation
+                        from app.models.tenant import Tenant
+                        tenant_result = db.execute(
+                            select(Tenant).where(Tenant.id == UUID(tenant_id))
+                        )
+                        tenant = tenant_result.scalar_one_or_none()
+                        
+                        # Extract brand context from tenant
+                        company_name = tenant.name if tenant else None
+                        brand_voice = tenant.brand_voice if tenant else None
+                        target_audience = tenant.target_audience if tenant else None
+                        
+                        logger.info(f"[TASK 4/6] Brand context: company={company_name}, voice={brand_voice}")
+                        
+                        # Generate image prompt with brand context and RAG knowledge
                         if first_platform_content:
                             image_prompt = _generate_image_prompt(
                                 platform=platform_name,
-                                content=first_platform_content
+                                content=first_platform_content,
+                                company_name=company_name,
+                                brand_voice=brand_voice,
+                                target_audience=target_audience,
+                                rag_context=context_text_for_keywords  # Include RAG context for product/service names
                             )
                         else:
-                            # Fallback if no content generated yet
-                            image_prompt = f"Generate a suitable image to post along with below content in {platform_name} -- {user_request}"
+                            # Fallback if no content generated yet - still use brand context
+                            image_prompt = _generate_image_prompt(
+                                platform=platform_name,
+                                content=user_request,
+                                company_name=company_name,
+                                brand_voice=brand_voice,
+                                target_audience=target_audience,
+                                rag_context=context_text_for_keywords  # Include RAG context for product/service names
+                            )
                         
                         logger.info(f"[TASK 4/6] Generated image prompt: {image_prompt[:200]}...")
                         
                         # Image generation is async (uses LLM), so use asyncio.run()
-                        # Pass tenant_id to auto-use brand assets as reference images
+                        # Pass tenant_id and brand_asset_ids for smart asset selection
                         image_result = asyncio.run(
                             _generate_image_async(
                                 prompt=image_prompt,
                                 aspect_ratio="1:1",
                                 number_of_images=1,
-                                tenant_id=tenant_id  # Auto-fetch and use brand assets
+                                tenant_id=tenant_id,
+                                brand_asset_ids=brand_asset_ids  # User-selected or random
                             )
                         )
                         
@@ -1518,21 +1705,32 @@ def execute_content_creation(
                 if include_video:
                     logger.info("[TASK 4/6] Generating video...")
                     try:
-                        # Generate video prompt in the format: 
-                        # "Generate a suitable video to post along with below content in [platform] -- [content]"
+                        # Generate video prompt with brand context 
                         first_platform = platforms[0] if platforms else "social media"
                         first_platform_content = None
                         if platform_contents:
                             first_platform_content = next(iter(platform_contents.values()), "")
                         
+                        # Generate video prompt with brand and RAG context
                         if first_platform_content:
                             video_prompt = _generate_video_prompt(
                                 platform=first_platform,
-                                content=first_platform_content
+                                content=first_platform_content,
+                                company_name=company_name,
+                                brand_voice=brand_voice,
+                                target_audience=target_audience,
+                                rag_context=context_text_for_keywords  # Include RAG context for product/service names
                             )
                         else:
-                            # Fallback if no content generated yet
-                            video_prompt = f"Generate a suitable video to post along with below content in {first_platform} -- {user_request}"
+                            # Fallback if no content generated yet - still use brand context
+                            video_prompt = _generate_video_prompt(
+                                platform=first_platform,
+                                content=user_request,
+                                company_name=company_name,
+                                brand_voice=brand_voice,
+                                target_audience=target_audience,
+                                rag_context=context_text_for_keywords
+                            )
                         
                         logger.info(f"[TASK 4/6] Generated video prompt: {video_prompt[:200]}...")
                         
@@ -1725,36 +1923,38 @@ def execute_content_creation(
                         # Platform-specific parameter extraction
                         if platform == "facebook":
                             logger.info(f"[{platform}] Extracting Facebook parameters...")
-                            if not integration.pages:
-                                logger.error(f"[{platform}] Missing pages data in integration")
+                            
+                            # Check if pages are available
+                            # NOTE: Facebook API ONLY supports Page posting - personal accounts cannot post via API
+                            has_pages = integration.pages and (
+                                (isinstance(integration.pages, list) and len(integration.pages) > 0) or
+                                (isinstance(integration.pages, dict) and integration.pages)
+                            )
+                            
+                            if not has_pages:
+                                # No pages = cannot post to Facebook
+                                logger.error(f"[{platform}] No Facebook Pages found. Personal account posting is NOT supported by Facebook API.")
+                                posting_failed += 1
                                 created_content_items.append({
                                     "platform": platform,
                                     "status": "failed",
-                                    "error": "Facebook pages not found in integration"
+                                    "error": "Facebook requires a Page to post. Personal profile posting is not supported. Please connect a Facebook Page."
                                 })
                                 continue
                             
                             # Get default page or fall back to first page (sync)
                             selected_page = None
-                            if integration.pages:
-                                # Find default page (one with is_default=True)
-                                if isinstance(integration.pages, list):
-                                    for page in integration.pages:
-                                        if isinstance(page, dict) and page.get("is_default"):
-                                            selected_page = page
-                                            break
-                                    # If no default, use first page
-                                    if not selected_page and integration.pages:
-                                        selected_page = integration.pages[0]
-                                elif isinstance(integration.pages, dict):
-                                    # Single page
-                                    selected_page = integration.pages
-                            if not selected_page:
-                                # Fall back to first page if no default is set
-                                selected_page = integration.pages[0] if isinstance(integration.pages, list) and integration.pages else None
-                                logger.info(f"[{platform}] No default page set, using first page")
-                            else:
-                                logger.info(f"[{platform}] Using default page: {selected_page.get('name', 'Unknown')}")
+                            if isinstance(integration.pages, list):
+                                for page in integration.pages:
+                                    if isinstance(page, dict) and page.get("is_default"):
+                                        selected_page = page
+                                        break
+                                # If no default, use first page
+                                if not selected_page and integration.pages:
+                                    selected_page = integration.pages[0]
+                            elif isinstance(integration.pages, dict):
+                                # Single page
+                                selected_page = integration.pages
                             
                             if selected_page:
                                 integration_data["page_id"] = selected_page.get("id") or selected_page.get("page_id")
@@ -1766,23 +1966,15 @@ def execute_content_creation(
                                     logger.info(f"[{platform}] Using page access token for posting")
                                     integration_data["page_access_token"] = page_access_token
                                 else:
-                                    logger.warning(f"[{platform}] Page access token not found, using user token (may fail)")
-                                logger.info(f"[{platform}] Found page_id: {integration_data.get('page_id')}, page_name: {integration_data.get('page_name')}")
+                                    logger.warning(f"[{platform}] Page access token not found, using user token")
+                                logger.info(f"[{platform}] Using page: {integration_data.get('page_name')} (id: {integration_data.get('page_id')})")
                             else:
-                                logger.error(f"[{platform}] No page data found in pages array")
+                                logger.error(f"[{platform}] Could not extract page from pages array")
+                                posting_failed += 1
                                 created_content_items.append({
                                     "platform": platform,
                                     "status": "failed",
-                                    "error": "No page data found in integration"
-                                })
-                                continue
-                            
-                            if not integration_data.get("page_id"):
-                                logger.error(f"[{platform}] page_id is missing after extraction")
-                                created_content_items.append({
-                                    "platform": platform,
-                                    "status": "failed",
-                                    "error": "Facebook page_id not found"
+                                    "error": "Could not find valid Facebook Page to post to."
                                 })
                                 continue
                         

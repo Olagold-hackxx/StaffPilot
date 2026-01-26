@@ -45,6 +45,7 @@ class BrandAsset(Base):
     
     # Status
     is_active = Column(Boolean, default=True)
+    is_logo = Column(Boolean, default=False)  # If True, always include in image generation as brand logo
     meta_data = Column(JSON, default={})
     
     # Timestamps

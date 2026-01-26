@@ -9,28 +9,34 @@ from app.utils.logger import logger
 
 
 class FacebookPostingService:
-    """Service for posting to Facebook"""
+    """Service for posting to Facebook Pages"""
     
     @staticmethod
     def post(
         content: str,
         access_token: str,
         page_id: str,
-        media_urls: Optional[List[str]] = None
+        media_urls: Optional[List[str]] = None,
+        is_personal_account: bool = False  # DEPRECATED: kept for backward compatibility, always ignored
     ) -> Dict:
         """
-        Unified Facebook posting function
+        Post content to a Facebook Page.
+        
+        NOTE: Facebook deprecated personal account posting via API (publish_actions permission).
+        Only Facebook Pages can post via Graph API.
         
         Args:
             content: Post text content
             access_token: Facebook Page access token
             page_id: Facebook Page ID
             media_urls: Optional list of media URLs
+            is_personal_account: DEPRECATED - ignored, only Pages are supported
         
         Returns:
             Dict with success status and post details
         """
         try:
+            # Always use page_id - personal account posting is not supported by Facebook API
             logger.info(f"[Facebook] Starting post - page_id: {page_id}, content_length: {len(content)}, has_media: {bool(media_urls)}")
             base_url = f"https://graph.facebook.com/v19.0/{page_id}"
             

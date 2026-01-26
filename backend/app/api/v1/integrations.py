@@ -981,21 +981,33 @@ async def _exchange_token(
             
             else:  # Instagram
                 # Get Instagram Business Account
+                # Request instagram_business_account{id} explicitly to ensure it's included
                 accounts_response = await client.get(
                     "https://graph.facebook.com/v18.0/me/accounts",
                     headers={"Authorization": f"Bearer {access_token}"},
-                    params={"fields": "id,name,access_token,instagram_business_account"}
+                    params={"fields": "id,name,access_token,instagram_business_account{id,username}"}
                 )
                 accounts_data = accounts_response.json()
                 
+                logger.info(f"[Instagram OAuth] Facebook Pages with IG accounts: {accounts_data}")
+                
                 instagram_account = None
                 for account in accounts_data.get("data", []):
-                    if account.get("instagram_business_account"):
+                    ig_business = account.get("instagram_business_account")
+                    if ig_business:
+                        logger.info(f"[Instagram OAuth] Found IG Business Account: {ig_business}")
                         instagram_account = account
                         break
                 
                 if not instagram_account:
-                    raise Exception("No Instagram Business Account found")
+                    # Provide more helpful error message
+                    page_names = [p.get('name', 'Unknown') for p in accounts_data.get("data", [])]
+                    logger.warning(f"[Instagram OAuth] No IG Business Account found. Pages checked: {page_names}")
+                    raise Exception(
+                        f"No Instagram Business Account found. "
+                        f"Please ensure your Instagram Business/Creator account is connected to one of these Facebook Pages: {', '.join(page_names)}. "
+                        f"Connect them in Meta Business Suite > Accounts > Connected Accounts."
+                    )
                 
                 ig_account_id = instagram_account["instagram_business_account"]["id"]
                 ig_response = await client.get(

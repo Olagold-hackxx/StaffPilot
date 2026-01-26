@@ -70,7 +70,7 @@ class Settings(BaseSettings):
     
     # Gemini Model Configuration
     GOOGLE_MODEL_CONTENT: str = "gemini-2.5-flash"  # For content generation
-    GOOGLE_MODEL_IMAGE: str = "gemini-2.5-flash-image"  # For image generation
+    GOOGLE_MODEL_IMAGE: str = "imagen-4.0-generate-001"  # For image generation (Imagen 4)
     GOOGLE_MODEL_VIDEO: str = "veo-3.1-generate-preview"  # For video generation (with audio)
     GOOGLE_EMBEDDING_MODEL: str = "text-embedding-004"  # For embeddings
     

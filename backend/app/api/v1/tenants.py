@@ -121,7 +121,15 @@ class TenantBrandAssetResponse(BaseModel):
     width: Optional[int]
     height: Optional[int]
     usage_count: int
+    is_logo: bool = False
     created_at: str
+
+
+class TenantBrandAssetUpdate(BaseModel):
+    """Schema for updating a tenant brand asset"""
+    name: Optional[str] = None
+    description: Optional[str] = None
+    is_logo: Optional[bool] = None
 
 
 class TenantBrandAssetListResponse(BaseModel):
@@ -299,6 +307,89 @@ async def upload_tenant_brand_asset(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to upload brand asset: {str(e)}"
+        )
+
+
+@router.patch("/me/brand-assets/{asset_id}", response_model=TenantBrandAssetResponse)
+async def update_tenant_brand_asset(
+    asset_id: UUID,
+    asset_data: TenantBrandAssetUpdate,
+    current_tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Update a tenant brand asset.
+    Supports setting is_logo flag (automatically unsets is_logo for other assets).
+    """
+    try:
+        from app.models.brand_asset import BrandAsset
+        from sqlalchemy import select, update
+        
+        # Get asset
+        result = await db.execute(
+            select(BrandAsset).where(
+                BrandAsset.id == asset_id,
+                BrandAsset.tenant_id == current_tenant.id
+            )
+        )
+        asset = result.scalar_one_or_none()
+        
+        if not asset:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Brand asset not found"
+            )
+            
+        # Update fields
+        if asset_data.name is not None:
+            asset.name = asset_data.name
+        if asset_data.description is not None:
+            asset.description = asset_data.description
+            
+        # Special handling for is_logo logic
+        if asset_data.is_logo is not None:
+            # If setting as logo, first unset logo from all other assets
+            if asset_data.is_logo:
+                await db.execute(
+                    update(BrandAsset)
+                    .where(BrandAsset.tenant_id == current_tenant.id)
+                    .where(BrandAsset.is_logo == True)
+                    .values(is_logo=False)
+                )
+            
+            asset.is_logo = asset_data.is_logo
+        
+        await db.commit()
+        await db.refresh(asset)
+        
+        logger.info(f"Updated tenant brand asset {asset_id}")
+        
+        return TenantBrandAssetResponse(
+            id=str(asset.id),
+            name=asset.name,
+            description=asset.description,
+            asset_type=asset.asset_type,
+            source=asset.source,
+            url=asset.url,
+            thumbnail_url=asset.thumbnail_url,
+            file_name=asset.file_name,
+            file_size=asset.file_size,
+            mime_type=asset.mime_type,
+            width=asset.width,
+            height=asset.height,
+            usage_count=asset.usage_count or 0,
+            is_logo=asset.is_logo or False,
+            created_at=asset.created_at.isoformat() if asset.created_at else ""
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating tenant brand asset: {str(e)}")
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update brand asset: {str(e)}"
         )
 
 

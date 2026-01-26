@@ -10,7 +10,7 @@ import {
   FileText, Plus, Loader2, CheckCircle2, Clock, 
   Facebook, Instagram, Linkedin, Twitter, Music,
   Sparkles, Image, Video, Calendar, Trash2, Pause, Play,
-  Send, Eye, Filter, Search, X, ExternalLink
+  Send, Eye, Filter, Search, X, ExternalLink, ChevronDown, ChevronRight, Settings
 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -98,6 +98,11 @@ export default function ContentPage() {
   const [requiresApproval, setRequiresApproval] = useState(false)
   const [isScheduled, setIsScheduled] = useState(false)
   const [scheduleName, setScheduleName] = useState("")
+  // Brand Asset State for Advanced Settings
+  const [brandAssets, setBrandAssets] = useState<any[]>([])
+  const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([])
+  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [loadingAssets, setLoadingAssets] = useState(false)
   const [scheduleType, setScheduleType] = useState<"one_time" | "daily" | "weekly" | "monthly">("daily")
   const [scheduleHour, setScheduleHour] = useState(9)
   const [scheduleMinute, setScheduleMinute] = useState(0)
@@ -120,7 +125,20 @@ export default function ContentPage() {
 
   useEffect(() => {
     loadData()
+    loadBrandAssets()
   }, [])
+
+  async function loadBrandAssets() {
+    try {
+      setLoadingAssets(true)
+      const response = await apiClient.listTenantBrandAssets()
+      setBrandAssets(response.assets || [])
+    } catch (error) {
+      console.error("Failed to load brand assets", error)
+    } finally {
+      setLoadingAssets(false)
+    }
+  }
 
   async function loadData() {
     try {
@@ -210,7 +228,7 @@ export default function ContentPage() {
 
 
   async function handleCreateContent() {
-    if (!capability || !request.trim()) return
+    if (!capability) return  // Request is optional - AI will use uploaded documents
 
     setSubmitting(true)
     try {
@@ -240,17 +258,23 @@ export default function ContentPage() {
         }
 
         await apiClient.createScheduledPost({
-          name: scheduleName.trim(),
-          assistant_id: digitalMarketer.id,
+          name: isScheduled ? scheduleName : `Content Execution ${Date.now()}`,
+          assistant_id: digitalMarketer.id, // Kept original digitalMarketer.id as it's the correct assistant ID
           capability_id: capability.id,
-          schedule_type: scheduleType,
-          schedule_config: scheduleConfig,
+          schedule_type: isScheduled ? (scheduleType as any) : "one_time",
+          schedule_config: {
+            hour: scheduleHour,
+            minute: scheduleMinute,
+            days_of_week: scheduleType === "weekly" ? [0, 1, 2, 3, 4, 5, 6] : undefined, // Apply based on scheduleType
+            days_of_month: scheduleType === "monthly" ? [1] : undefined // Apply based on scheduleType
+          },
           request: request.trim(),
           platforms: selectedPlatforms,
           include_images: includeImages,
           include_video: includeVideo,
           requires_approval: requiresApproval,
-          start_date: new Date(startDate).toISOString(),
+          brand_asset_ids: selectedAssetIds, // Pass selected assets
+          start_date: startDate ? new Date(startDate).toISOString() : new Date().toISOString(),
           end_date: endDate ? new Date(endDate).toISOString() : undefined,
         })
 
@@ -273,6 +297,7 @@ export default function ContentPage() {
             include_images: includeImages,
             include_video: includeVideo,
             requires_approval: requiresApproval,
+            brand_asset_ids: selectedAssetIds, // Pass selected assets
           },
         })
 
@@ -350,6 +375,8 @@ export default function ContentPage() {
     setScheduleType("daily")
     setScheduleHour(9)
     setScheduleMinute(0)
+    setSelectedAssetIds([]) // Reset selected assets
+    setShowAdvanced(false)
   }
 
   async function pollExecutionStatus(executionId: string) {
@@ -1078,8 +1105,9 @@ export default function ContentPage() {
             </div>
             <div>
               <Label htmlFor="platforms" className="text-sm font-medium mb-2 block">
-                Platforms (Optional)
+                Platforms <span className="text-destructive">*</span>
               </Label>
+              <p className="text-xs text-muted-foreground mb-2">Select at least one platform to post to</p>
               <div id="platforms" className="flex flex-wrap gap-2">
                 {["facebook", "instagram", "linkedin", "twitter", "tiktok"].map((platform) => {
                   const Icon = platformIcons[platform]
@@ -1263,7 +1291,79 @@ export default function ContentPage() {
                 />
               </div>
             </div>
-          </div>
+
+            {/* Advanced Settings Section */}
+            <div className="border rounded-md p-4 bg-muted/20">
+              <button 
+                type="button" 
+                onClick={() => setShowAdvanced(!showAdvanced)}
+                className="flex items-center gap-2 w-full text-left font-medium text-sm"
+              >
+                <Settings className="h-4 w-4" />
+                Advanced Settings
+                {showAdvanced ? <ChevronDown className="h-4 w-4 ml-auto" /> : <ChevronRight className="h-4 w-4 ml-auto" />}
+              </button>
+              
+              {showAdvanced && (
+                <div className="pt-4 mt-2 border-t space-y-4 animate-in slide-in-from-top-2 duration-200">
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium">Brand Asset Reference Images</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Select specific brand assets to use as visual references for AI image generation.
+                      If none selected, the AI will automatically choose relevant assets.
+                    </p>
+                    
+                    {loadingAssets ? (
+                      <div className="flex justify-center p-4">
+                        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                      </div>
+                    ) : brandAssets.length === 0 ? (
+                      <div className="text-center p-4 border border-dashed rounded text-sm text-muted-foreground">
+                        No brand assets found. Upload assets in the Brand Assets library.
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-4 gap-2 max-h-[200px] overflow-y-auto p-1">
+                        {brandAssets.filter(a => a.asset_type === 'image').map(asset => (
+                          <div 
+                            key={asset.id}
+                            className={`
+                              relative aspect-square rounded overflow-hidden cursor-pointer border transition-all
+                              ${selectedAssetIds.includes(asset.id) ? 'ring-2 ring-primary border-primary' : 'hover:border-primary/50'}
+                            `}
+                            onClick={() => {
+                              if (selectedAssetIds.includes(asset.id)) {
+                                setSelectedAssetIds(selectedAssetIds.filter(id => id !== asset.id))
+                              } else {
+                                if (selectedAssetIds.length >= 3) {
+                                  toast({ title: "Limit Reached", description: "Max 3 assets can be selected", variant: "destructive" })
+                                  return
+                                }
+                                setSelectedAssetIds([...selectedAssetIds, asset.id])
+                              }
+                            }}
+                          >
+                            <img src={asset.url} alt={asset.name} className="w-full h-full object-cover" />
+                            {asset.is_logo && (
+                              <Badge variant="secondary" className="absolute top-1 left-1 h-4 text-[9px] px-1 bg-yellow-500 text-white border-none">Logo</Badge>
+                            )}
+                            {selectedAssetIds.includes(asset.id) && (
+                              <div className="absolute inset-0 bg-primary/20 flex items-center justify-center">
+                                <CheckCircle2 className="h-6 w-6 text-primary bg-white rounded-full" />
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <p className="text-xs text-muted-foreground text-right">
+                      {selectedAssetIds.length} / 3 selected
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+            </div>
+
           <div className="flex justify-end gap-2 pt-4">
             <Button variant="outline" onClick={() => {
               setShowCreateDialog(false)
@@ -1273,7 +1373,7 @@ export default function ContentPage() {
             </Button>
             <Button 
               onClick={handleCreateContent} 
-              disabled={submitting || (isScheduled && (!scheduleName.trim() || !startDate))}
+              disabled={submitting || selectedPlatforms.length === 0 || (isScheduled && (!scheduleName.trim() || !startDate))}
             >
               {submitting ? (
                 <>

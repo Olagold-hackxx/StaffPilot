@@ -38,6 +38,7 @@ class ScheduledPostCreate(BaseModel):
     platforms: List[str] = Field(default=[], description="List of platforms to post to")
     include_images: bool = Field(default=False, description="Include images in content")
     include_video: bool = Field(default=False, description="Include video in content")
+    brand_asset_ids: Optional[List[str]] = Field(default=None, description="Specific brand assets to use for image generation")
     requires_approval: bool = Field(default=False, description="If true, content requires manual approval before publishing")
     start_date: str = Field(..., description="Start date (ISO format)")
     end_date: Optional[str] = Field(None, description="End date (ISO format, optional)")
@@ -51,6 +52,7 @@ class ScheduledPostUpdate(BaseModel):
     platforms: Optional[List[str]] = None
     include_images: Optional[bool] = None
     include_video: Optional[bool] = None
+    brand_asset_ids: Optional[List[str]] = None
     requires_approval: Optional[bool] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
@@ -68,6 +70,7 @@ class ScheduledPostResponse(BaseModel):
     platforms: List[str]
     include_images: bool
     include_video: bool
+    brand_asset_ids: Optional[List[str]]
     requires_approval: bool
     start_date: str
     end_date: Optional[str]
@@ -189,6 +192,7 @@ async def create_scheduled_post(
             platforms=post_data.platforms,
             include_images=post_data.include_images,
             include_video=post_data.include_video,
+            brand_asset_ids=post_data.brand_asset_ids or [],
             requires_approval=post_data.requires_approval,
             start_date=start_date,
             end_date=end_date,
@@ -215,6 +219,7 @@ async def create_scheduled_post(
             platforms=scheduled_post.platforms or [],
             include_images=scheduled_post.include_images,
             include_video=scheduled_post.include_video,
+            brand_asset_ids=scheduled_post.brand_asset_ids or [],
             requires_approval=scheduled_post.requires_approval,
             start_date=scheduled_post.start_date.isoformat(),
             end_date=scheduled_post.end_date.isoformat() if scheduled_post.end_date else None,
@@ -460,6 +465,7 @@ async def get_scheduled_post(
             platforms=scheduled_post.platforms or [],
             include_images=scheduled_post.include_images,
             include_video=scheduled_post.include_video,
+            brand_asset_ids=scheduled_post.brand_asset_ids or [],
             requires_approval=scheduled_post.requires_approval,
             start_date=scheduled_post.start_date.isoformat(),
             end_date=scheduled_post.end_date.isoformat() if scheduled_post.end_date else None,
@@ -522,6 +528,8 @@ async def update_scheduled_post(
             scheduled_post.include_images = post_data.include_images
         if post_data.include_video is not None:
             scheduled_post.include_video = post_data.include_video
+        if post_data.brand_asset_ids is not None:
+            scheduled_post.brand_asset_ids = post_data.brand_asset_ids
         if post_data.requires_approval is not None:
             scheduled_post.requires_approval = post_data.requires_approval
         if post_data.start_date is not None:
@@ -563,6 +571,7 @@ async def update_scheduled_post(
             platforms=scheduled_post.platforms or [],
             include_images=scheduled_post.include_images,
             include_video=scheduled_post.include_video,
+            brand_asset_ids=scheduled_post.brand_asset_ids or [],
             requires_approval=scheduled_post.requires_approval,
             start_date=scheduled_post.start_date.isoformat(),
             end_date=scheduled_post.end_date.isoformat() if scheduled_post.end_date else None,

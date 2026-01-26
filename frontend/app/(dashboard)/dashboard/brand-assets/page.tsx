@@ -10,7 +10,7 @@ import { useToast } from "@/components/ui/use-toast"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { 
   LayoutGrid, Image, Loader2, Upload, Trash2, CheckCircle2,
-  FileText, FolderOpen, HardDrive, ArrowLeft, Check, Video
+  FileText, FolderOpen, HardDrive, ArrowLeft, Check, Video, Star
 } from "lucide-react"
 
 interface BrandAsset {
@@ -23,6 +23,7 @@ interface BrandAsset {
   thumbnail_url?: string
   usage_count: number
   created_at: string
+  is_logo?: boolean
 }
 
 interface DriveFile {
@@ -263,6 +264,38 @@ export default function BrandAssetsPage() {
     }
   }
 
+  async function handleSetLogo(asset: BrandAsset) {
+    try {
+      // Toggle logic - if already logo, unset it (though backend unsets others automatically)
+      const newIsLogo = !asset.is_logo
+      
+      await apiClient.updateTenantBrandAsset(asset.id, { is_logo: newIsLogo })
+      
+      // Update local state
+      setBrandAssets(brandAssets.map(a => {
+        if (a.id === asset.id) {
+          return { ...a, is_logo: newIsLogo }
+        }
+        // Unset others if we are setting this one as logo
+        if (newIsLogo && a.is_logo) {
+          return { ...a, is_logo: false }
+        }
+        return a
+      }))
+      
+      toast({
+        title: newIsLogo ? "Logo Set" : "Logo Unset",
+        description: newIsLogo ? "This asset will represent your brand in content generation" : "Asset is no longer marked as logo",
+      })
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: "Failed to update asset",
+        variant: "destructive",
+      })
+    }
+  }
+
 
 
   return (
@@ -378,6 +411,12 @@ export default function BrandAssetsPage() {
                             {asset.asset_type === 'video' ? <Video className="h-3 w-3 mr-1" /> : <Image className="h-3 w-3 mr-1" />}
                             {asset.asset_type}
                           </Badge>
+                          {asset.is_logo && (
+                            <Badge variant="default" className="h-5 text-[10px] px-1.5 ml-1 bg-yellow-500 hover:bg-yellow-600 text-white border-yellow-600">
+                              <Star className="h-3 w-3 mr-1 fill-white" />
+                              Logo
+                            </Badge>
+                          )}
                       </div>
 
                       {/* Selection Indicator */}
@@ -389,6 +428,18 @@ export default function BrandAssetsPage() {
 
                       {/* Hover Overlay */}
                       <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                        <Button
+                          variant="secondary"
+                          size="icon"
+                          className="h-8 w-8"
+                          title={asset.is_logo ? "Unset as Logo" : "Set as Logo"}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleSetLogo(asset)
+                          }}
+                        >
+                          <Star className={`h-4 w-4 ${asset.is_logo ? "fill-yellow-500 text-yellow-500" : ""}`} />
+                        </Button>
                         <Button
                           variant="destructive"
                           size="icon"

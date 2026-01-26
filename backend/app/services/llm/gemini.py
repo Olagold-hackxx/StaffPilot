@@ -280,7 +280,7 @@ Return your response as valid JSON only. Do not include any markdown formatting 
             import base64
             from google.genai import types
             
-            model_name = self.image_model_name or "gemini-3-pro-image-preview"
+            model_name = self.image_model_name or "imagen-3.0-generate-002"
             logger.info(f"Generating {number_of_images} image(s) with {model_name}, prompt: {prompt[:100]}...")
             
             if reference_images:
@@ -288,42 +288,81 @@ Return your response as valid JSON only. Do not include any markdown formatting 
             
             images = []
             
-            for _ in range(number_of_images):
+            # Check if model is an Imagen model (uses generate_images API)
+            is_imagen_model = "imagen" in model_name.lower()
+            
+            for i in range(number_of_images):
                 def _generate():
-                    # Build contents with reference images if provided
-                    contents = []
-                    
-                    # Add reference images first
-                    if reference_images:
-                        for i, img_bytes in enumerate(reference_images[:3]):  # Max 3 references
-                            # Detect mime type
-                            mime_type = "image/jpeg"
-                            if img_bytes[:8] == b'\x89PNG\r\n\x1a\n':
-                                mime_type = "image/png"
-                            elif img_bytes[:2] == b'\xff\xd8':
-                                mime_type = "image/jpeg"
+                    if is_imagen_model:
+                        # Use Imagen API (generate_images method)
+                        try:
+                            # Imagen 4 uses image_size instead of aspect_ratio
+                            config = types.GenerateImagesConfig(
+                                number_of_images=1,
+                                image_size="1K",  # Optional: "2K" or "1K"
+                            )
                             
-                            contents.append(types.Part.from_bytes(
-                                data=img_bytes,
-                                mime_type=mime_type
-                            ))
-                            logger.info(f"Added reference image {i+1} ({mime_type}, {len(img_bytes)} bytes)")
-                    
-                    # Add text prompt
-                    if reference_images:
-                        contents.append(f"Using the reference images above as style inspiration, generate: {prompt}")
+                            response = self.genai_client.models.generate_images(
+                                model=model_name,
+                                prompt=prompt,
+                                config=config
+                            )
+                            return response
+                        except AttributeError:
+                            # Fallback to generate_content if generate_images not available
+                            logger.warning("generate_images not available, falling back to generate_content")
+                            return self.genai_client.models.generate_content(
+                                model=model_name,
+                                contents=[prompt]
+                            )
                     else:
-                        contents.append(prompt)
-                    
-                    response = self.genai_client.models.generate_content(
-                        model=model_name,
-                        contents=contents
-                    )
-                    return response
+                        # Use Gemini multimodal API (generate_content)
+                        contents = []
+                        
+                        # Add reference images first
+                        if reference_images:
+                            for idx, img_bytes in enumerate(reference_images[:3]):  # Max 3 references
+                                # Detect mime type
+                                mime_type = "image/jpeg"
+                                if img_bytes[:8] == b'\x89PNG\r\n\x1a\n':
+                                    mime_type = "image/png"
+                                elif img_bytes[:2] == b'\xff\xd8':
+                                    mime_type = "image/jpeg"
+                                
+                                contents.append(types.Part.from_bytes(
+                                    data=img_bytes,
+                                    mime_type=mime_type
+                                ))
+                                logger.info(f"Added reference image {idx+1} ({mime_type}, {len(img_bytes)} bytes)")
+                        
+                        # Add text prompt
+                        if reference_images:
+                            contents.append(f"Using the reference images above as style inspiration, generate: {prompt}")
+                        else:
+                            contents.append(prompt)
+                        
+                        response = self.genai_client.models.generate_content(
+                            model=model_name,
+                            contents=contents
+                        )
+                        return response
                 
                 response = await asyncio.to_thread(_generate)
                 
-                # Process response parts
+                # Handle Imagen API response (generated_images list)
+                if is_imagen_model and hasattr(response, 'generated_images') and response.generated_images:
+                    for gen_image in response.generated_images:
+                        try:
+                            if hasattr(gen_image, 'image') and hasattr(gen_image.image, 'image_bytes'):
+                                image_data = gen_image.image.image_bytes
+                                if image_data:
+                                    logger.info(f"✓ Got Imagen image ({len(image_data)} bytes)")
+                                    images.append(image_data)
+                        except Exception as e:
+                            logger.error(f"Failed to extract Imagen image: {str(e)}")
+                    continue  # Skip the generate_content response handling below
+                
+                # Process response parts (for generate_content responses)
                 if hasattr(response, 'parts') and response.parts:
                     for part in response.parts:
                         if hasattr(part, 'inline_data') and part.inline_data is not None:
@@ -487,13 +526,42 @@ Return your response as valid JSON only. Do not include any markdown formatting 
             import base64
             from google.genai import types
             
-            model_name = self.image_model_name or "gemini-3-pro-image-preview"
+            model_name = self.image_model_name or "imagen-3.0-generate-002"
             logger.info(f"[SYNC] Generating {number_of_images} image(s) with {model_name}")
             
             images = []
+            is_imagen_model = "imagen" in model_name.lower()
             
             for _ in range(number_of_images):
-                # Build contents with reference images if provided
+                if is_imagen_model:
+                    # Use Imagen API (generate_images method)
+                    try:
+                        # Imagen 4 uses image_size instead of aspect_ratio
+                        config = types.GenerateImagesConfig(
+                            number_of_images=1,
+                            image_size="1K",  # Optional: "2K" or "1K"
+                        )
+                        
+                        response = self.genai_client.models.generate_images(
+                            model=model_name,
+                            prompt=prompt,
+                            config=config
+                        )
+                        
+                        # Handle Imagen API response
+                        if hasattr(response, 'generated_images') and response.generated_images:
+                            for gen_image in response.generated_images:
+                                if hasattr(gen_image, 'image') and hasattr(gen_image.image, 'image_bytes'):
+                                    image_data = gen_image.image.image_bytes
+                                    if image_data:
+                                        images.append(image_data)
+                                        logger.info(f"[SYNC] Added Imagen image ({len(image_data)} bytes)")
+                        continue
+                    except AttributeError as e:
+                        logger.warning(f"generate_images not available, falling back: {e}")
+                        # Fall through to generate_content below
+                
+                # Use Gemini multimodal API (generate_content)
                 contents = []
                 
                 # Add reference images first

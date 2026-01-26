@@ -983,6 +983,13 @@ class ApiClient {
     });
   }
 
+  async updateTenantBrandAsset(assetId: string, data: { is_logo?: boolean; name?: string; description?: string }) {
+    return this.request<{ success: boolean; asset: any }>(`/tenants/me/brand-assets/${assetId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
   async generateContentVideo(prompt: string, duration: number = 15, brandAssetIds?: string[]) {
     return this.request<{
       task_id: string;
