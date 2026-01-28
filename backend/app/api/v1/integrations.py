@@ -332,9 +332,7 @@ async def init_oauth(
     # Build redirect URI - point to backend callback endpoint
     # Must match exactly what's registered in the OAuth app settings
     backend_url = settings.BACKEND_URL or 'http://localhost:8000'
-    # Instagram uses Facebook OAuth, so use facebook callback for both
-    callback_platform = "facebook" if platform in ["instagram", "facebook"] else platform
-    redirect_uri = f"{backend_url}/api/v1/integrations/oauth/{callback_platform}/callback"
+    redirect_uri = f"{backend_url}/api/v1/integrations/oauth/{platform}/callback"
     
     # Platform-specific OAuth URL generation
     if platform == "facebook":
@@ -760,9 +758,7 @@ async def oauth_callback(
             url=f"{redirect_base}?success=false&error=Platform not configured"
         )
     
-    # Instagram uses Facebook OAuth, so use facebook callback for both
-    callback_platform = "facebook" if platform in ["instagram", "facebook"] else platform
-    redirect_uri = f"{backend_url}/api/v1/integrations/oauth/{callback_platform}/callback"
+    redirect_uri = f"{backend_url}/api/v1/integrations/oauth/{platform}/callback"
     
     try:
         # Exchange code for token (platform-specific)
