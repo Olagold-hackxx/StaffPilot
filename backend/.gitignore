@@ -73,5 +73,3 @@ chroma_db/
 /tmp/postgres-ca.crt
 postgres-ca.crt*
 
-
-ocr-keys.json
