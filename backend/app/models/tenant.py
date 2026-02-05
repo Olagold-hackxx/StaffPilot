@@ -29,6 +29,7 @@ class Tenant(Base):
     offerings = Column(Text, nullable=True)
     website_url = Column(String(500), nullable=True)  # Website URL for links in content/campaigns
     custom_config = Column(JSON, default={})
+    brand_colors = Column(JSON, default=[])  # Array of hex color codes, e.g. ["#FF5733", "#3498DB"]
     
     # Google Drive Integration
     google_drive_tokens = Column(JSON, nullable=True)  # OAuth tokens for Drive access

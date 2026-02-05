@@ -230,7 +230,7 @@ def _fetch_brand_asset_bytes(
         max_random: Max number of assets to randomly select if no user selection
     
     Returns:
-        List of image bytes (max 3 total)
+        Tuple of (List of image bytes, boolean indicating if logo was included)
     """
     from app.db.session import create_worker_session_factory
     from app.models.brand_asset import BrandAsset
@@ -245,6 +245,7 @@ def _fetch_brand_asset_bytes(
     try:
         selected_assets = []
         logo_asset = None
+        has_logo = False
         
         # Step 1: Fetch logo asset if requested
         if include_logo:
@@ -259,7 +260,8 @@ def _fetch_brand_asset_bytes(
             logo_asset = logo_result.scalar_one_or_none()
             if logo_asset:
                 selected_assets.append(logo_asset)
-                logger.info(f"[BrandAssets] Found logo asset: {logo_asset.name}")
+                has_logo = True
+                logger.info(f"[/BrandAssets] Found logo asset: {logo_asset.name}")
         
         # Step 2: Fetch user-selected assets (if provided)
         if asset_ids:
@@ -281,7 +283,7 @@ def _fetch_brand_asset_bytes(
                 asset = asset_result.scalar_one_or_none()
                 if asset:
                     selected_assets.append(asset)
-                    logger.info(f"[BrandAssets] Added user-selected asset: {asset.name}")
+                    logger.info(f"[/BrandAssets] Added user-selected asset: {asset.name}")
         
         # Step 3: If no user selection, randomly pick additional assets
         elif len(selected_assets) < 3:
@@ -303,13 +305,13 @@ def _fetch_brand_asset_bytes(
             for asset in random_assets:
                 if asset.id not in exclude_ids:
                     selected_assets.append(asset)
-                    logger.info(f"[BrandAssets] Randomly selected: {asset.name}")
+                    logger.info(f"[/BrandAssets] Randomly selected: {asset.name}")
         
         if not selected_assets:
-            logger.info(f"[BrandAssets] No brand assets found for tenant {tenant_id}")
-            return []
+            logger.info(f"[/BrandAssets] No brand assets found for tenant {tenant_id}")
+            return [], False
         
-        logger.info(f"[BrandAssets] Selected {len(selected_assets)} assets for AI generation")
+        logger.info(f"[/BrandAssets] Selected {len(selected_assets)} assets for AI generation")
         
         # Download image bytes from storage
         asset_bytes = []
@@ -320,20 +322,20 @@ def _fetch_brand_asset_bytes(
                         response = client.get(asset.url)
                         if response.status_code == 200:
                             asset_bytes.append(response.content)
-                            logger.info(f"[BrandAssets] Fetched: {asset.name} ({len(response.content)} bytes)")
+                            logger.info(f"[/BrandAssets] Fetched: {asset.name} ({len(response.content)} bytes)")
                             
                             # Update usage count
                             asset.usage_count = (asset.usage_count or 0) + 1
             except Exception as e:
-                logger.warning(f"[BrandAssets] Failed to fetch {asset.id}: {e}")
+                logger.warning(f"[/BrandAssets] Failed to fetch {asset.id}: {e}")
                 continue
         
         db.commit()
-        return asset_bytes
+        return asset_bytes, has_logo
         
     except Exception as e:
-        logger.error(f"[BrandAssets] Error fetching brand assets: {e}")
-        return []
+        logger.error(f"[/BrandAssets] Error fetching brand assets: {e}")
+        return [], False
     finally:
         db.close()
 
@@ -348,6 +350,7 @@ async def _generate_image_async(
     """
     Async helper function to generate images using AI.
     Automatically uses brand assets as reference images if tenant_id is provided.
+    Includes OCR text verification with retry logic.
     
     Args:
         prompt: Text prompt for image generation
@@ -360,13 +363,40 @@ async def _generate_image_async(
         Dict with success, images, and count
     """
     from app.services.llm.factory import create_llm_service
+    from app.config import settings
+    from app.db.session import create_worker_session_factory
+    from app.models.tenant import Tenant
+    from sqlalchemy import select
+    from uuid import UUID
+    
+    company_name = None
+    brand_colors = []
+    if tenant_id:
+        db = None
+        try:
+            SessionFactory = create_worker_session_factory()
+            db = SessionFactory()
+            tenant_result = db.execute(
+                select(Tenant).where(Tenant.id == UUID(tenant_id))
+            )
+            tenant = tenant_result.scalar_one_or_none()
+            if tenant:
+                company_name = tenant.name
+                # Also get brand colors
+                brand_colors = tenant.brand_colors if tenant.brand_colors else []
+        except Exception as e:
+            logger.warning(f"Error fetching tenant details for image generation: {e}")
+        finally:
+            if db:
+                db.close()
     
     llm_service = create_llm_service()
     
     # Fetch brand assets for reference images (smart selection)
     reference_images = []
+    has_logo = False
     if tenant_id:
-        reference_images = _fetch_brand_asset_bytes(
+        reference_images, has_logo = _fetch_brand_asset_bytes(
             tenant_id=tenant_id,
             asset_ids=brand_asset_ids,  # User-selected (or None for random)
             include_logo=True,  # Always include logo
@@ -375,19 +405,96 @@ async def _generate_image_async(
         if reference_images:
             logger.info(f"Using {len(reference_images)} brand assets as reference images for generation")
     
-    # Generate images with references if available
-    # The updated GeminiService.generate_image supports reference_images
-    images = await llm_service.generate_image(
-        prompt=prompt,
-        aspect_ratio=aspect_ratio,
-        number_of_images=number_of_images,
-        reference_images=reference_images if reference_images else None
-    )
+    # OCR verification with retry logic
+    max_ocr_retries = settings.OCR_MAX_RETRIES if settings.OCR_ENABLED else 0
+    
+    # Enforce logo prompt logic (CRITICAL emphasis)
+    logo_instruction = ""
+    if has_logo:
+        logo_instruction = "\n=== CRITICAL - LOGO REQUIREMENT (NON-NEGOTIABLE) ===\nOne of the reference images is the BRAND LOGO. This logo MUST appear prominently in the image. Use the EXACT colors, text, and details. Do NOT redraw or stylize. FAILURE TO INCLUDE THE LOGO IS UNACCEPTABLE.\n==================================================="
+    
+    # Build brand colors instruction
+    brand_colors_instruction = ""
+    if brand_colors:
+        colors_str = ", ".join(brand_colors)
+        brand_colors_instruction = f"\nBRAND COLORS: Use these exact colors in the design: {colors_str}"
+    
+    # === STYLE EXTRACTION: Two-step approach for better brand matching ===
+    style_prompt = ""
+    if reference_images:
+        try:
+            from app.services.style_extraction_service import extract_style_prompt_sync, get_enhanced_generation_prompt
+            style_prompt = extract_style_prompt_sync(
+                reference_images=reference_images,
+                brand_colors=brand_colors,
+                company_name=company_name
+            )
+            if style_prompt:
+                logger.info(f"Extracted style prompt for image ({len(style_prompt)} chars)")
+        except Exception as e:
+            logger.warning(f"Style extraction failed: {e}")
+    
+    # Build enhanced prompt
+    if style_prompt:
+        current_prompt = get_enhanced_generation_prompt(
+            user_prompt=prompt,
+            style_prompt=style_prompt,
+            logo_instruction=logo_instruction
+        )
+        if brand_colors_instruction and brand_colors_instruction not in current_prompt:
+            current_prompt += brand_colors_instruction
+    else:
+        current_prompt = prompt + logo_instruction + brand_colors_instruction
+    final_images = []
+    
+    for ocr_attempt in range(max_ocr_retries + 1):
+        # Generate images with references if available
+        images = await llm_service.generate_image(
+            prompt=current_prompt,
+            aspect_ratio=aspect_ratio,
+            number_of_images=number_of_images,
+            reference_images=reference_images if reference_images else None
+        )
+        
+        image_list = images if isinstance(images, list) else [images] if images else []
+        
+        if not image_list:
+            break
+        
+        # OCR verification for first image (if enabled)
+        if settings.OCR_ENABLED and ocr_attempt < max_ocr_retries:
+            try:
+                # Get first image bytes
+                img_data = image_list[0]
+                img_bytes = img_data if isinstance(img_data, bytes) else bytes(img_data) if img_data else None
+                
+                if img_bytes:
+                    from app.services.text_verification_service import verify_and_correct_content
+                    
+                    verification = verify_and_correct_content(
+                        media_bytes=img_bytes,
+                        media_type="image",
+                        original_prompt=current_prompt,
+                        allowed_terms=[company_name] if company_name else None
+                    )
+                    
+                    if verification["needs_regeneration"]:
+                        logger.info(f"[OCR] Image text verification failed, regenerating with corrections (attempt {ocr_attempt + 1})")
+                        current_prompt = verification["corrected_prompt"]
+                        continue  # Retry with corrected prompt
+                    else:
+                        logger.info("[OCR] Image text verification passed")
+            except Exception as ocr_err:
+                logger.warning(f"[OCR] Image verification error (continuing): {ocr_err}")
+        
+        # Verification passed or OCR disabled - use these images
+        final_images = image_list
+        break
     
     return {
         "success": True,
-        "images": images if isinstance(images, list) else [images] if images else [],
-        "count": len(images) if isinstance(images, list) else (1 if images else 0),
+        "images": final_images,
+        "count": len(final_images),
         "used_references": len(reference_images)
     }
 
@@ -498,10 +605,38 @@ async def _generate_video_async(
     """
     Async helper function to generate video using AI.
     Automatically uses brand assets as reference images if tenant_id is provided.
+    Includes OCR text verification with retry logic.
     Note: Uses sync method internally for better Celery compatibility.
     """
+    from app.db.session import create_worker_session_factory
+    from app.models.tenant import Tenant
+    from sqlalchemy import select
+    from uuid import UUID
+    
+    company_name = None
+    brand_colors = []
+    db = None
+    
+    try:
+        if tenant_id:
+            SessionFactory = create_worker_session_factory()
+            db = SessionFactory()
+            tenant_result = db.execute(
+                select(Tenant).where(Tenant.id == UUID(tenant_id))
+            )
+            tenant = tenant_result.scalar_one_or_none()
+            if tenant:
+                company_name = tenant.name
+                brand_colors = tenant.brand_colors if tenant.brand_colors else []
+    except Exception as e:
+        logger.warning(f"Error fetching tenant details for video generation: {e}")
+    finally:
+        if db:
+            db.close()
+
     try:
         from app.services.llm.factory import create_llm_service
+        from app.config import settings
         
         llm_service = create_llm_service()
         
@@ -510,41 +645,113 @@ async def _generate_video_async(
 
         # Fetch brand assets for reference images if tenant_id provided
         reference_images = []
+        has_logo = False
         if tenant_id:
-            reference_images = _fetch_brand_asset_bytes(tenant_id, limit=3)
+            reference_images, has_logo = _fetch_brand_asset_bytes(tenant_id, limit=5)  # Increased to 5 for better style extraction
             if reference_images:
                 logger.info(f"Using {len(reference_images)} brand assets as reference images for video generation")
         
-        # Use extended video generation with references if available
-        if hasattr(llm_service, 'generate_extended_video_sync'):
-            video = llm_service.generate_extended_video_sync(
-                prompt=prompt,
-                target_duration_seconds=duration_seconds,
-                reference_images=reference_images if reference_images else None,
-                aspect_ratio="16:9"
+        # Enforce logo prompt logic (CRITICAL emphasis)
+        logo_instruction = ""
+        if has_logo:
+            logo_instruction = "\n=== CRITICAL - LOGO REQUIREMENT (NON-NEGOTIABLE) ===\nOne of the reference images is the BRAND LOGO. This logo MUST appear prominently in the video. Use the EXACT colors, text, and details. Do NOT redraw or stylize. FAILURE TO INCLUDE THE LOGO IS UNACCEPTABLE.\n==================================================="
+        
+        # Build brand colors instruction
+        brand_colors_instruction = ""
+        if brand_colors:
+            colors_str = ", ".join(brand_colors)
+            brand_colors_instruction = f"\nBRAND COLORS: Use these exact colors in the video: {colors_str}"
+        
+        # === STYLE EXTRACTION: Two-step approach for better brand matching ===
+        style_prompt = ""
+        if reference_images:
+            try:
+                from app.services.style_extraction_service import extract_style_prompt_sync, get_enhanced_generation_prompt
+                style_prompt = extract_style_prompt_sync(
+                    reference_images=reference_images,
+                    brand_colors=brand_colors,
+                    company_name=company_name
+                )
+                if style_prompt:
+                    logger.info(f"Extracted style prompt for video ({len(style_prompt)} chars)")
+            except Exception as e:
+                logger.warning(f"Style extraction failed for video: {e}")
+        
+        # Build enhanced prompt
+        if style_prompt:
+            current_prompt = get_enhanced_generation_prompt(
+                user_prompt=prompt,
+                style_prompt=style_prompt,
+                logo_instruction=logo_instruction
             )
-        # Use sync method with references for better Celery compatibility
-        elif reference_images and hasattr(llm_service, 'generate_video_with_references_sync'):
-            video = llm_service.generate_video_with_references_sync(
-                prompt=prompt,
-                reference_images=reference_images,
-                aspect_ratio="16:9"
-            )
-        elif hasattr(llm_service, 'generate_video_sync'):
-            video = llm_service.generate_video_sync(
-                prompt=prompt,
-                duration_seconds=duration_seconds
-            )
+            if brand_colors_instruction and brand_colors_instruction not in current_prompt:
+                current_prompt += brand_colors_instruction
         else:
-            # Fallback to async if sync not available
-            video = await llm_service.generate_video(
-                prompt=prompt,
-                duration_seconds=duration_seconds
-            )
+            current_prompt = prompt + logo_instruction + brand_colors_instruction
+        
+        # OCR verification with retry logic
+        max_ocr_retries = settings.OCR_MAX_RETRIES if settings.OCR_ENABLED else 0
+        final_video = None
+        
+        for ocr_attempt in range(max_ocr_retries + 1):
+            # Generate video
+            if hasattr(llm_service, 'generate_extended_video_sync'):
+                video = llm_service.generate_extended_video_sync(
+                    prompt=current_prompt,
+                    target_duration_seconds=duration_seconds,
+                    reference_images=reference_images if reference_images else None,
+                    aspect_ratio="16:9"
+                )
+            elif reference_images and hasattr(llm_service, 'generate_video_with_references_sync'):
+                video = llm_service.generate_video_with_references_sync(
+                    prompt=current_prompt,
+                    reference_images=reference_images,
+                    aspect_ratio="16:9"
+                )
+            elif hasattr(llm_service, 'generate_video_sync'):
+                video = llm_service.generate_video_sync(
+                    prompt=current_prompt,
+                    duration_seconds=duration_seconds
+                )
+            else:
+                video = await llm_service.generate_video(
+                    prompt=current_prompt,
+                    duration_seconds=duration_seconds
+                )
+            
+            if not video:
+                break
+            
+            video_bytes = video if isinstance(video, bytes) else bytes(video) if video else None
+            
+            # OCR verification (if enabled)
+            if settings.OCR_ENABLED and ocr_attempt < max_ocr_retries and video_bytes:
+                try:
+                    from app.services.text_verification_service import verify_and_correct_content
+                    
+                    verification = verify_and_correct_content(
+                        media_bytes=video_bytes,
+                        media_type="video",
+                        original_prompt=current_prompt,
+                        allowed_terms=[company_name] if company_name else None
+                    )
+                    
+                    if verification["needs_regeneration"]:
+                        logger.info(f"[OCR] Video text verification failed, regenerating with corrections (attempt {ocr_attempt + 1})")
+                        current_prompt = verification["corrected_prompt"]
+                        continue  # Retry with corrected prompt
+                    else:
+                        logger.info("[OCR] Video text verification passed")
+                except Exception as ocr_err:
+                    logger.warning(f"[OCR] Video verification error (continuing): {ocr_err}")
+            
+            # Verification passed or OCR disabled - use this video
+            final_video = video
+            break
         
         return {
             "success": True,
-            "video": video,
+            "video": final_video,
             "used_references": len(reference_images)
         }
     except Exception as e:
@@ -856,43 +1063,93 @@ def generate_video_with_assets_task(
         db = SessionFactory()
         
         try:
-            # Fetch brand assets if provided
+            # Fetch brand assets (Prioritize Logo)
             reference_images = []
+            has_logo = False
+            brand_colors = []  # Fetch brand colors from tenant
+            
+            # Fetch tenant for brand colors
+            try:
+                from app.models.tenant import Tenant
+                tenant_result = db.execute(
+                    select(Tenant).where(Tenant.id == UUID(tenant_id))
+                )
+                tenant = tenant_result.scalar_one_or_none()
+                if tenant and tenant.brand_colors:
+                    brand_colors = tenant.brand_colors
+                    logger.info(f"Found {len(brand_colors)} brand colors for video")
+            except Exception as e:
+                logger.warning(f"Failed to fetch tenant brand colors: {e}")
+            
+            # 1. Fetch Logo first (always try to include logo if available for brand consistency)
+            logo_result = db.execute(
+                select(BrandAsset)
+                .where(BrandAsset.tenant_id == UUID(tenant_id))
+                .where(BrandAsset.asset_type == "image")
+                .where(BrandAsset.is_active == True)
+                .where(BrandAsset.is_logo == True)
+                .limit(1)
+            )
+            logo_asset = logo_result.scalar_one_or_none()
+            
+            selected_assets = []
+            if logo_asset:
+                selected_assets.append(logo_asset)
+                has_logo = True
+                logger.info(f"Found logo asset for video: {logo_asset.name}")
+            
+            # 2. Fetch User Selected Assets (if any)
             if brand_asset_ids:
                 for asset_id in brand_asset_ids:
-                    try:
-                        asset_result = db.execute(
-                            select(BrandAsset).where(
-                                BrandAsset.id == UUID(asset_id),
-                                BrandAsset.tenant_id == UUID(tenant_id),
-                                BrandAsset.is_active == True,
-                                BrandAsset.asset_type == "image"
-                            )
-                        )
-                        asset = asset_result.scalar_one_or_none()
+                    # Skip if already added (logo)
+                    if logo_asset and str(logo_asset.id) == asset_id:
+                        continue
                         
-                        if asset and asset.url:
-                            logger.info(f"Fetching brand asset {asset_id}: {asset.name}")
-                            try:
-                                response = requests.get(asset.url, timeout=30)
+                    asset_result = db.execute(
+                        select(BrandAsset).where(
+                            BrandAsset.id == UUID(asset_id),
+                            BrandAsset.tenant_id == UUID(tenant_id),
+                            BrandAsset.is_active == True,
+                            BrandAsset.asset_type == "image"
+                        )
+                    )
+                    asset = asset_result.scalar_one_or_none()
+                    if asset:
+                        selected_assets.append(asset)
+            
+            # Limit to 3 assets total (Veo limit)
+            selected_assets = selected_assets[:3]
+                
+            if selected_assets:
+                # Download bytes
+                for asset in selected_assets:
+                    try:
+                        if asset.url:
+                            with httpx.Client(timeout=30.0) as client:
+                                response = client.get(asset.url)
                                 if response.status_code == 200:
                                     reference_images.append(response.content)
-                                    logger.info(f"Loaded brand asset: {asset.name} ({len(response.content)} bytes)")
-                                    
-                                    # Update usage count
-                                    asset.usage_count = (asset.usage_count or 0) + 1
-                                    from datetime import datetime, timezone
-                                    asset.last_used_at = datetime.now(timezone.utc)
-                                else:
-                                    logger.warning(f"Failed to fetch asset {asset_id}: HTTP {response.status_code}")
-                            except Exception as fetch_err:
-                                logger.warning(f"Failed to fetch asset {asset_id}: {fetch_err}")
-                    except Exception as asset_err:
-                        logger.warning(f"Failed to load brand asset {asset_id}: {asset_err}")
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch asset {asset.id}: {e}")
+
+            # Enforce LOGO usage in prompt (CRITICAL emphasis)
+            if has_logo:
+                prompt += """
+=== CRITICAL - LOGO REQUIREMENT (NON-NEGOTIABLE) ===
+The first reference image provided is the BRAND LOGO.
+This logo MUST appear prominently in the generated video.
+- The logo must be VISIBLE and UNMODIFIED
+- Use the EXACT colors, text, and details from the logo image
+- Do NOT redraw, reinterpret, or stylize the logo
+FAILURE TO INCLUDE THE LOGO IS UNACCEPTABLE.
+==================================================="""
             
-            logger.info(f"Loaded {len(reference_images)} reference images")
-            
-            # Generate video
+            # Add brand colors instruction
+            if brand_colors:
+                colors_str = ", ".join(brand_colors)
+                prompt += f"\nBRAND COLORS: Use these exact colors in the video: {colors_str}"
+                
+
             llm_service = create_llm_service()
             video_url = None
             

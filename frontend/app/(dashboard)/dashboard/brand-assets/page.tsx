@@ -10,7 +10,7 @@ import { useToast } from "@/components/ui/use-toast"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { 
   LayoutGrid, Image, Loader2, Upload, Trash2, CheckCircle2,
-  FileText, FolderOpen, HardDrive, ArrowLeft, Check, Video, Star
+  FileText, FolderOpen, HardDrive, ArrowLeft, Check, Video, Star, Palette, Plus, X
 } from "lucide-react"
 
 interface BrandAsset {
@@ -44,6 +44,11 @@ export default function BrandAssetsPage() {
   const [uploadingAsset, setUploadingAsset] = useState(false)
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([])
 
+  // Brand Colors state
+  const [brandColors, setBrandColors] = useState<string[]>([])
+  const [newColor, setNewColor] = useState("#000000")
+  const [savingColors, setSavingColors] = useState(false)
+
   // Google Drive state
   const [driveConnected, setDriveConnected] = useState(false)
   const [driveConnecting, setDriveConnecting] = useState(false)
@@ -56,6 +61,7 @@ export default function BrandAssetsPage() {
 
   useEffect(() => {
     loadBrandAssets()
+    loadBrandColors()
     checkDriveStatus()
     
     // Check if returning from OAuth callback
@@ -65,6 +71,49 @@ export default function BrandAssetsPage() {
       handleDriveCallback(code)
     }
   }, [])
+
+  async function loadBrandColors() {
+    try {
+      const tenant = await apiClient.getCurrentTenant()
+      setBrandColors(tenant.brand_colors || [])
+    } catch (error) {
+      console.error("Failed to load brand colors:", error)
+    }
+  }
+
+  async function saveBrandColors(colors: string[]) {
+    try {
+      setSavingColors(true)
+      await apiClient.updateCurrentTenant({ brand_colors: colors })
+      setBrandColors(colors)
+      toast({
+        title: "Saved",
+        description: "Brand colors updated successfully",
+      })
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: "Failed to save brand colors",
+        variant: "destructive",
+      })
+    } finally {
+      setSavingColors(false)
+    }
+  }
+
+  function addColor() {
+    if (brandColors.includes(newColor)) {
+      toast({ title: "Duplicate", description: "Color already exists", variant: "destructive" })
+      return
+    }
+    const updated = [...brandColors, newColor]
+    saveBrandColors(updated)
+  }
+
+  function removeColor(color: string) {
+    const updated = brandColors.filter(c => c !== color)
+    saveBrandColors(updated)
+  }
 
   async function checkDriveStatus() {
     try {
@@ -331,6 +380,73 @@ export default function BrandAssetsPage() {
       </div>
 
       <div className="grid gap-6">
+        {/* Brand Colors Section */}
+        <Card>
+          <CardHeader className="pb-3">
+            <div className="flex items-center gap-2">
+              <Palette className="h-5 w-5 text-primary" />
+              <CardTitle className="text-base">Brand Colors</CardTitle>
+            </div>
+            <CardDescription>
+              Specify your brand colors (hex codes) to use in AI-generated content
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-wrap gap-3 items-center">
+              {brandColors.map((color) => (
+                <div 
+                  key={color} 
+                  className="flex items-center gap-2 bg-muted rounded-full pl-1 pr-2 py-1"
+                >
+                  <div 
+                    className="w-6 h-6 rounded-full border-2 border-background shadow-sm" 
+                    style={{ backgroundColor: color }}
+                  />
+                  <span className="text-xs font-mono">{color}</span>
+                  <button 
+                    onClick={() => removeColor(color)}
+                    className="text-muted-foreground hover:text-destructive transition-colors"
+                    disabled={savingColors}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+              
+              {/* Add Color */}
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  value={newColor}
+                  onChange={(e) => setNewColor(e.target.value)}
+                  className="w-8 h-8 rounded cursor-pointer border-0"
+                />
+                <Input
+                  value={newColor}
+                  onChange={(e) => setNewColor(e.target.value)}
+                  placeholder="#FF5733"
+                  className="w-24 h-8 text-xs font-mono"
+                />
+                <Button 
+                  size="sm" 
+                  variant="outline" 
+                  onClick={addColor}
+                  disabled={savingColors || !newColor}
+                  className="h-8"
+                >
+                  {savingColors ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
+                  <span className="ml-1">Add</span>
+                </Button>
+              </div>
+            </div>
+            {brandColors.length === 0 && (
+              <p className="text-sm text-muted-foreground mt-2">
+                No brand colors set. Add colors to ensure consistent branding in generated content.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+
         <div className="space-y-4">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-2">

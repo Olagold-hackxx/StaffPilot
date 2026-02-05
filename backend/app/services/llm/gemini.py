@@ -494,6 +494,21 @@ Return your response as valid JSON only. Do not include any markdown formatting 
                     break
             
             if not images:
+                # DEBUG: Check if there's text content explaining why
+                if hasattr(response, 'text') and response.text:
+                    logger.warning(f"Image generation returned text instead of image: {response.text}")
+                elif hasattr(response, 'parts'):
+                    for part in response.parts:
+                        if hasattr(part, 'text') and part.text:
+                            logger.warning(f"Image generation returned text part: {part.text}")
+
+                # DEBUG: Deep inspection
+                logger.warning(f"FULL RESPONSE DUMP: {response}")
+                if hasattr(response, 'prompt_feedback'):
+                   logger.warning(f"Prompt Feedback: {response.prompt_feedback}")
+                if hasattr(response, 'candidates'):
+                   logger.warning(f"Candidates: {response.candidates}")
+                            
                 raise Exception("No valid images generated")
             
             logger.info(f"✓ Successfully generated {len(images)} image(s)")

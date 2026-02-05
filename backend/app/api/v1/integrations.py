@@ -775,6 +775,7 @@ async def oauth_callback(
             refresh_token_expires_at = None
         
         # Create or update integration
+        logger.info(f"[OAuth Callback] Saving integration with {len(pages)} pages: {[p.get('name') for p in pages]}")
         integration = await service.create_or_update_integration(
             tenant_id=tenant_id,
             platform=platform,

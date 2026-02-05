@@ -70,7 +70,7 @@ class Settings(BaseSettings):
     
     # Gemini Model Configuration
     GOOGLE_MODEL_CONTENT: str = "gemini-2.5-flash"  # For content generation
-    GOOGLE_MODEL_IMAGE: str = "imagen-4.0-generate-001"  # For image generation (Imagen 4)
+    GOOGLE_MODEL_IMAGE: str = "gemini-3-pro-image-preview"  # For image generation (Gemini 3 Pro Image Preview)
     GOOGLE_MODEL_VIDEO: str = "veo-3.1-generate-preview"  # For video generation (with audio)
     GOOGLE_EMBEDDING_MODEL: str = "text-embedding-004"  # For embeddings
     
@@ -128,6 +128,11 @@ class Settings(BaseSettings):
     # Meta Ads API (for Facebook/Instagram Ads)
     META_ADS_APP_ID: Optional[str] = None
     META_ADS_APP_SECRET: Optional[str] = None
+    
+    # OCR Configuration (for text verification in generated content)
+    OCR_ENABLED: bool = True  # Enable/disable OCR text verification
+    OCR_MAX_RETRIES: int = 2  # Maximum regeneration attempts if text errors found
+    GOOGLE_CLOUD_VISION_CREDENTIALS: Optional[str] = None  # Path to JSON file or JSON content
         
     # Celery
     CELERY_BROKER_URL: str = "redis://localhost:6379/1"

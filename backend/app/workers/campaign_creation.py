@@ -1041,42 +1041,121 @@ def _execute_image_generation(
         except Exception as e:
             logger.warning(f"Failed to retrieve RAG context for images: {e}")
 
-    # Fetch brand assets for reference images
+    # Fetch brand assets for reference images (prioritizing logo)
     brand_asset_context = ""
     reference_image_bytes = []
+    has_logo = False
+    brand_colors = []  # Fetch brand colors from tenant
+    
+    try:
+        from app.models.tenant import Tenant
+        tenant_result = db.execute(
+            select(Tenant).where(Tenant.id == UUID(tenant_id))
+        )
+        tenant = tenant_result.scalar_one_or_none()
+        if tenant and tenant.brand_colors:
+            brand_colors = tenant.brand_colors
+            logger.info(f"Found {len(brand_colors)} brand colors for tenant")
+    except Exception as e:
+        logger.warning(f"Failed to fetch tenant brand colors: {e}")
+    
     try:
         from app.models.brand_asset import BrandAsset
         from sqlalchemy import select
         import httpx
         
-        result = db.execute(
+        selected_assets = []
+        logo_asset = None
+        
+        # Step 1: Fetch logo asset
+        logo_result = db.execute(
             select(BrandAsset)
             .where(BrandAsset.tenant_id == UUID(tenant_id))
             .where(BrandAsset.asset_type == "image")
             .where(BrandAsset.is_active == True)
-            .limit(3)
+            .where(BrandAsset.is_logo == True)
+            .limit(1)
         )
-        brand_assets = result.scalars().all()
-        if brand_assets:
-            brand_asset_context = f"\n\nBRAND ASSETS: Using {len(brand_assets)} brand reference images to maintain visual consistency."
-            logger.info(f"Found {len(brand_assets)} brand assets for campaign image generation")
+        logo_asset = logo_result.scalar_one_or_none()
+        if logo_asset:
+            selected_assets.append(logo_asset)
+            has_logo = True
+            logger.info(f"Found logo asset for campaign: {logo_asset.name}")
+        
+        # Step 2: Fetch other assets to fill up to 5 (increased for better style extraction)
+        remaining_slots = 5 - len(selected_assets)
+        if remaining_slots > 0:
+            exclude_ids = [logo_asset.id] if logo_asset else []
+            asset_result = db.execute(
+                select(BrandAsset)
+                .where(BrandAsset.tenant_id == UUID(tenant_id))
+                .where(BrandAsset.asset_type == "image")
+                .where(BrandAsset.is_active == True)
+                .where(BrandAsset.is_logo == False)
+                .limit(remaining_slots)
+            )
+            other_assets = asset_result.scalars().all()
+            selected_assets.extend(other_assets)
+            
+        if selected_assets:
+            brand_asset_context = f"\n\nBRAND ASSETS: Using {len(selected_assets)} brand reference images. "
+            if has_logo:
+                brand_asset_context += "IMPORTANT: The first reference image is the BRAND LOGO."
+            
+            logger.info(f"Selected {len(selected_assets)} assets for campaign image generation")
             
             # Download asset bytes
-            for asset in brand_assets:
+            for asset in selected_assets:
                 try:
                     if asset.url:
                         with httpx.Client(timeout=30.0) as client:
                             response = client.get(asset.url)
                             if response.status_code == 200:
                                 reference_image_bytes.append(response.content)
-                                logger.info(f"Fetched brand asset bytes for image gen: {asset.name}")
+                                logger.info(f"Fetched brand asset bytes: {asset.name}")
                 except Exception as e:
                     logger.warning(f"Failed to fetch asset bytes {asset.id}: {e}")
             
     except Exception as e:
         logger.warning(f"Failed to fetch brand assets: {e}")
 
-    prompt = f"""Generate a high-end, premium advertising image for the campaign "{campaign_name}".
+    # Build prompt instructions for logo (CRITICAL emphasis)
+    logo_instruction = ""
+    if has_logo:
+        logo_instruction = """
+=== CRITICAL - LOGO REQUIREMENT (NON-NEGOTIABLE) ===
+One of the reference images provided is the BRAND LOGO.
+This logo MUST appear prominently in the generated image.
+- The logo must be VISIBLE and UNMODIFIED
+- Use the EXACT colors, text, and details from the logo image
+- Do NOT redraw, reinterpret, or stylize the logo
+- Place it clearly in the design (corner, overlay, or product)
+FAILURE TO INCLUDE THE LOGO IS UNACCEPTABLE.
+==================================================="""
+    
+    # Build brand colors instruction
+    brand_colors_instruction = ""
+    if brand_colors:
+        colors_str = ", ".join(brand_colors)
+        brand_colors_instruction = f"\nBRAND COLORS: Use these exact colors in the design: {colors_str}"
+    
+    # === STYLE EXTRACTION: Two-step approach for better brand matching ===
+    style_prompt = ""
+    if reference_image_bytes:
+        try:
+            from app.services.style_extraction_service import extract_style_prompt_sync
+            style_prompt = extract_style_prompt_sync(
+                reference_images=reference_image_bytes,
+                brand_colors=brand_colors,
+                company_name=campaign_name
+            )
+            if style_prompt:
+                logger.info(f"Extracted style prompt for image generation ({len(style_prompt)} chars)")
+        except Exception as e:
+            logger.warning(f"Style extraction failed, using standard prompt: {e}")
+
+    # Build the prompt with style guidance
+    base_content = f"""Generate a high-end, premium advertising image for the campaign "{campaign_name}".
 
 Context: {step_description}
 Product: {product_brief}
@@ -1092,56 +1171,112 @@ Style Direction:
 - Resolution: 8k, highly detailed
 - Follow the Brand Guidelines above if provided.
 
-IMPORTANT: Ensure all text in the generated media is in English and free of spelling mistakes.
-
 Create an image that perfectly captures the campaign's visual identity.
 """
     
+    # Use style extraction result if available
+    if style_prompt:
+        from app.services.style_extraction_service import get_enhanced_generation_prompt
+        prompt = get_enhanced_generation_prompt(
+            user_prompt=base_content,
+            style_prompt=style_prompt,
+            logo_instruction=logo_instruction
+        )
+        # Add brand colors if not already in style prompt
+        if brand_colors_instruction and brand_colors_instruction not in prompt:
+            prompt += brand_colors_instruction
+    else:
+        # Fallback to standard prompt
+        prompt = base_content + f"""
+IMPORTANT: Ensure all text in the generated media is in English and free of spelling mistakes.
+{logo_instruction}
+{brand_colors_instruction}
+"""
+    
     # Call LLM for image (sync - no asyncio needed for Celery workers)
+    # Include OCR verification with retry logic
+    from app.config import settings
+    max_ocr_retries = settings.OCR_MAX_RETRIES if settings.OCR_ENABLED else 0
+    current_prompt = prompt
+    
     try:
         llm_service = create_llm_service()
         logger.info("DEBUG: created llm_service")
         
         image_urls = []
-        try:
-            logger.info("DEBUG: Calling generate_image_sync...")
-            # generate_image_sync returns List[bytes]
-            image_bytes_list = llm_service.generate_image_sync(
-                prompt=prompt,
-                number_of_images=1,
-                reference_images=reference_image_bytes if reference_image_bytes else None
-            )
-            logger.info(f"DEBUG: generate_image_sync returned {len(image_bytes_list) if image_bytes_list else 0} images")
-            
-            # Upload each image to storage (sync)
-            if image_bytes_list:
-                from app.services.storage import get_storage
-                from io import BytesIO
-                import uuid as uuid_lib
+        final_image_bytes = None
+        
+        for ocr_attempt in range(max_ocr_retries + 1):
+            try:
+                logger.info(f"DEBUG: Calling generate_image_sync (attempt {ocr_attempt + 1}/{max_ocr_retries + 1})...")
+                # generate_image_sync returns List[bytes]
+                image_bytes_list = llm_service.generate_image_sync(
+                    prompt=current_prompt,
+                    number_of_images=1,
+                    reference_images=reference_image_bytes if reference_image_bytes else None
+                )
+                logger.info(f"DEBUG: generate_image_sync returned {len(image_bytes_list) if image_bytes_list else 0} images")
                 
-                logger.info("DEBUG: Getting storage...")
-                storage = get_storage()
-                logger.info("DEBUG: Got storage")
+                if not image_bytes_list:
+                    logger.info("DEBUG: image_bytes_list is empty/None")
+                    break
                 
-                for i, img_data in enumerate(image_bytes_list):
+                # Get first image bytes for verification
+                img_data = image_bytes_list[0]
+                img_bytes_raw = img_data if isinstance(img_data, bytes) else bytes(img_data)
+                
+                # OCR verification (if enabled)
+                if settings.OCR_ENABLED and ocr_attempt < max_ocr_retries:
                     try:
-                        logger.info(f"DEBUG: Processing image {i}, type: {type(img_data)}")
-                        img_bytes = BytesIO(img_data) if isinstance(img_data, bytes) else BytesIO(bytes(img_data))
-                        storage_key = f"tenants/{tenant_id}/campaigns/{campaign_id}/images/{uuid_lib.uuid4()}.png"
+                        from app.services.text_verification_service import verify_and_correct_content
                         
-                        logger.info(f"DEBUG: Uploading to {storage_key}...")
-                        # Use sync upload
-                        url = storage.upload_sync(key=storage_key, file=img_bytes, content_type="image/png")
-                        image_urls.append(url)
-                        logger.info(f"Uploaded image to: {url}")
-                    except Exception as upload_err:
-                        logger.error(f"Failed to upload image: {upload_err}")
-            else:
-                logger.info("DEBUG: image_bytes_list is empty/None")
+                        verification = verify_and_correct_content(
+                            media_bytes=video_bytes_raw,
+                            media_type="video",
+                            original_prompt=current_prompt,
+                            allowed_terms=[campaign_name]
+                        )
+                        
+                        if verification["needs_regeneration"]:
+                            logger.info(f"[OCR] Text verification failed, regenerating with corrections (attempt {ocr_attempt + 1})")
+                            current_prompt = verification["corrected_prompt"]
+                            continue  # Retry with corrected prompt
+                        else:
+                            logger.info(f"[OCR] Text verification passed")
+                    except Exception as ocr_err:
+                        logger.warning(f"[OCR] Verification error (continuing): {ocr_err}")
                 
-        except Exception as inner_e:
-            logger.error(f"DEBUG: Error in inner generation/upload block: {inner_e}")
-            raise inner_e
+                # Verification passed or OCR disabled - use this image
+                final_image_bytes = img_bytes_raw
+                break
+                
+            except Exception as inner_e:
+                logger.error(f"DEBUG: Error in inner generation block (attempt {ocr_attempt + 1}): {inner_e}")
+                if ocr_attempt == max_ocr_retries:
+                    raise inner_e
+        
+        # Upload final image to storage (sync)
+        if final_image_bytes:
+            from app.services.storage import get_storage
+            from io import BytesIO
+            import uuid as uuid_lib
+            
+            logger.info("DEBUG: Getting storage...")
+            storage = get_storage()
+            logger.info("DEBUG: Got storage")
+            
+            try:
+                logger.info(f"DEBUG: Processing final image, size: {len(final_image_bytes)} bytes")
+                img_bytes_io = BytesIO(final_image_bytes)
+                storage_key = f"tenants/{tenant_id}/campaigns/{campaign_id}/images/{uuid_lib.uuid4()}.png"
+                
+                logger.info(f"DEBUG: Uploading to {storage_key}...")
+                # Use sync upload
+                url = storage.upload_sync(key=storage_key, file=img_bytes_io, content_type="image/png")
+                image_urls.append(url)
+                logger.info(f"Uploaded image to: {url}")
+            except Exception as upload_err:
+                logger.error(f"Failed to upload image: {upload_err}")
             
     except Exception as e:
         logger.warning(f"Image generation failed: {e}")
@@ -1211,45 +1346,67 @@ def _execute_video_generation(
         except Exception as e:
             logger.warning(f"Failed to retrieve RAG context for video: {e}")
 
-    # Build video prompt
-    video_prompt = f"""Create a short, cinematic marketing video for the campaign "{campaign_name}".
-
-Context: {step_description}
-Product/Service: {product_brief if product_brief else 'General marketing'}
-
-{rag_context}
-
-{context_str}
-
-DIRECTION:
-- Conveys the brand message effectively
-- Ends with a clear call to action
-
-IMPORTANT: Ensure all text in the generated media is in English and free of spelling mistakes.
-"""
-    
     # Use sync methods (no asyncio needed for Celery workers)
     llm_service = create_llm_service()
     
-    # Fetch brand assets for reference images
+    # Fetch brand assets for reference images (prioritizing logo)
     reference_images = []
+    has_logo = False
+    brand_colors = []  # Fetch brand colors from tenant
+    
+    try:
+        from app.models.tenant import Tenant
+        tenant_result = db.execute(
+            select(Tenant).where(Tenant.id == UUID(tenant_id))
+        )
+        tenant = tenant_result.scalar_one_or_none()
+        if tenant and tenant.brand_colors:
+            brand_colors = tenant.brand_colors
+            logger.info(f"Found {len(brand_colors)} brand colors for video")
+    except Exception as e:
+        logger.warning(f"Failed to fetch tenant brand colors for video: {e}")
+    
     try:
         from app.models.brand_asset import BrandAsset
         from sqlalchemy import select
         import httpx
         
-        result = db.execute(
+        selected_assets = []
+        logo_asset = None
+        
+        # Step 1: Fetch logo asset
+        logo_result = db.execute(
             select(BrandAsset)
             .where(BrandAsset.tenant_id == UUID(tenant_id))
             .where(BrandAsset.asset_type == "image")
             .where(BrandAsset.is_active == True)
-            .limit(3)  # Veo 3.1 supports up to 3 reference images
+            .where(BrandAsset.is_logo == True)
+            .limit(1)
         )
-        brand_assets = result.scalars().all()
+        logo_asset = logo_result.scalar_one_or_none()
+        if logo_asset:
+            selected_assets.append(logo_asset)
+            has_logo = True
+            logger.info(f"Found logo asset for video: {logo_asset.name}")
         
-        if brand_assets:
-            logger.info(f"Found {len(brand_assets)} brand assets for video reference")
-            for asset in brand_assets:
+        # Step 2: Fetch other assets to fill up to 5 (increased for better style extraction)
+        remaining_slots = 5 - len(selected_assets)
+        if remaining_slots > 0:
+            exclude_ids = [logo_asset.id] if logo_asset else []
+            asset_result = db.execute(
+                select(BrandAsset)
+                .where(BrandAsset.tenant_id == UUID(tenant_id))
+                .where(BrandAsset.asset_type == "image")
+                .where(BrandAsset.is_active == True)
+                .where(BrandAsset.is_logo == False)
+                .limit(remaining_slots)
+            )
+            other_assets = asset_result.scalars().all()
+            selected_assets.extend(other_assets)
+            
+        if selected_assets:
+            logger.info(f"Found {len(selected_assets)} brand assets for video reference")
+            for asset in selected_assets:
                 try:
                     if asset.url:
                         with httpx.Client(timeout=30.0) as client:
@@ -1261,44 +1418,145 @@ IMPORTANT: Ensure all text in the generated media is in English and free of spel
                     logger.warning(f"Failed to fetch asset {asset.id}: {e}")
     except Exception as e:
         logger.warning(f"Failed to fetch brand assets for video: {e}")
+
+    # Build prompt instructions for logo (CRITICAL emphasis)
+    logo_instruction = ""
+    if has_logo:
+        logo_instruction = """
+=== CRITICAL - LOGO REQUIREMENT (NON-NEGOTIABLE) ===
+One of the reference images provided is the BRAND LOGO.
+This logo MUST appear prominently in the generated video.
+- The logo must be VISIBLE and UNMODIFIED
+- Use the EXACT colors, text, and details from the logo image
+- Do NOT redraw, reinterpret, or stylize the logo
+- Place it clearly (corner, overlay, or end screen)
+FAILURE TO INCLUDE THE LOGO IS UNACCEPTABLE.
+==================================================="""
+    
+    # Build brand colors instruction
+    brand_colors_instruction = ""
+    if brand_colors:
+        colors_str = ", ".join(brand_colors)
+        brand_colors_instruction = f"\nBRAND COLORS: Use these exact colors in the video: {colors_str}"
+    
+    # === STYLE EXTRACTION: Two-step approach for better brand matching ===
+    style_prompt = ""
+    if reference_images:
+        try:
+            from app.services.style_extraction_service import extract_style_prompt_sync
+            style_prompt = extract_style_prompt_sync(
+                reference_images=reference_images,
+                brand_colors=brand_colors,
+                company_name=campaign_name
+            )
+            if style_prompt:
+                logger.info(f"Extracted style prompt for video generation ({len(style_prompt)} chars)")
+        except Exception as e:
+            logger.warning(f"Style extraction failed for video, using standard prompt: {e}")
+
+    # Build video prompt with style guidance
+    base_video_content = f"""Create a short, cinematic marketing video for the campaign "{campaign_name}".
+
+Context: {step_description}
+Product/Service: {product_brief if product_brief else 'General marketing'}
+
+{rag_context}
+
+{context_str}
+
+DIRECTION:
+- Conveys the brand message effectively
+- Ends with a clear call to action
+"""
+    
+    # Use style extraction result if available
+    if style_prompt:
+        from app.services.style_extraction_service import get_enhanced_generation_prompt
+        video_prompt = get_enhanced_generation_prompt(
+            user_prompt=base_video_content,
+            style_prompt=style_prompt,
+            logo_instruction=logo_instruction
+        )
+        if brand_colors_instruction and brand_colors_instruction not in video_prompt:
+            video_prompt += brand_colors_instruction
+    else:
+        video_prompt = base_video_content + f"""
+IMPORTANT: Ensure all text in the generated media is in English and free of spelling mistakes.
+{logo_instruction}
+{brand_colors_instruction}
+"""
     
     # Variable duration: pick a random value between 8 and 60 seconds
     import random
     video_duration = random.choice([8, 15, 30, 45, 60])
     
+    # OCR verification with retry logic
+    from app.config import settings
+    max_ocr_retries = settings.OCR_MAX_RETRIES if settings.OCR_ENABLED else 0
+    current_video_prompt = video_prompt
+    final_video_data = None
+    
     # Generate video synchronously (this can take several minutes)
-    logger.info(f"Starting video generation ({video_duration}s) with {len(reference_images)} brand asset references...")
-    try:
-        # Use references if available
-        if reference_images and hasattr(llm_service, 'generate_video_with_references_sync'):
-            video_data = llm_service.generate_video_with_references_sync(
-                prompt=video_prompt,
-                reference_images=reference_images,
-                aspect_ratio="16:9"
-            )
-        else:
-            video_data = llm_service.generate_video_sync(
-                prompt=video_prompt,
-                duration_seconds=video_duration,
-                aspect_ratio="16:9"
-            )
-    except Exception as e:
-        logger.error(f"Video generation failed: {e}")
-        # Mock on failure for demo
-        video_data = b"MOCK_VIDEO" 
-        
+    for ocr_attempt in range(max_ocr_retries + 1):
+        logger.info(f"Starting video generation (attempt {ocr_attempt + 1}/{max_ocr_retries + 1}, {video_duration}s) with {len(reference_images)} brand asset references...")
+        try:
+            # Use references if available
+            if reference_images and hasattr(llm_service, 'generate_video_with_references_sync'):
+                video_data = llm_service.generate_video_with_references_sync(
+                    prompt=current_video_prompt,
+                    reference_images=reference_images,
+                    aspect_ratio="16:9"
+                )
+            else:
+                video_data = llm_service.generate_video_sync(
+                    prompt=current_video_prompt,
+                    duration_seconds=video_duration,
+                    aspect_ratio="16:9"
+                )
+            
+            if not video_data or video_data == b"MOCK_VIDEO":
+                logger.warning("Video generation returned empty or mock data")
+                break
+            
+            video_bytes_raw = video_data if isinstance(video_data, bytes) else bytes(video_data)
+            
+            # OCR verification (if enabled)
+            if settings.OCR_ENABLED and ocr_attempt < max_ocr_retries:
+                try:
+                    from app.services.text_verification_service import verify_and_correct_content
+                    
+                    verification = verify_and_correct_content(
+                        media_bytes=video_bytes_raw,
+                        media_type="video",
+                        original_prompt=current_video_prompt
+                    )
+                    
+                    if verification["needs_regeneration"]:
+                        logger.info(f"[OCR] Video text verification failed, regenerating with corrections (attempt {ocr_attempt + 1})")
+                        current_video_prompt = verification["corrected_prompt"]
+                        continue  # Retry with corrected prompt
+                    else:
+                        logger.info(f"[OCR] Video text verification passed")
+                except Exception as ocr_err:
+                    logger.warning(f"[OCR] Video verification error (continuing): {ocr_err}")
+            
+            # Verification passed or OCR disabled - use this video
+            final_video_data = video_bytes_raw
+            break
+            
+        except Exception as e:
+            logger.error(f"Video generation failed (attempt {ocr_attempt + 1}): {e}")
+            if ocr_attempt == max_ocr_retries:
+                # Mock on failure for demo
+                final_video_data = None
     
     # Upload to storage (sync)
     video_urls = []
-    if video_data:
+    if final_video_data:
         storage = get_storage()
         try:
             video_bytes = BytesIO()
-            if isinstance(video_data, bytes):
-                video_bytes.write(video_data)
-            else:
-                video_bytes.write(bytes(video_data))
-            
+            video_bytes.write(final_video_data)
             video_bytes.seek(0)
             storage_key = f"tenants/{tenant_id}/campaigns/{campaign_id}/videos/{uuid_lib.uuid4()}.mp4"
             

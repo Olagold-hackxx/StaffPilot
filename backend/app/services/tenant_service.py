@@ -116,7 +116,7 @@ class TenantService:
         allowed_fields = [
             'name', 'domain', 'brand_voice', 'target_audience',
             'offerings', 'custom_config', 'is_active', 'is_onboarded',
-            'website_url'  # Website URL for campaigns/ads
+            'website_url', 'brand_colors'  # Website URL for campaigns/ads
         ]
         
         for field, value in kwargs.items():

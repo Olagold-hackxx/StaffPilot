@@ -190,6 +190,7 @@ async def list_tenant_brand_assets(
                     width=a.width,
                     height=a.height,
                     usage_count=a.usage_count or 0,
+                    is_logo=a.is_logo or False,
                     created_at=a.created_at.isoformat() if a.created_at else ""
                 )
                 for a in assets
@@ -296,6 +297,7 @@ async def upload_tenant_brand_asset(
             width=brand_asset.width,
             height=brand_asset.height,
             usage_count=brand_asset.usage_count or 0,
+            is_logo=brand_asset.is_logo or False,
             created_at=brand_asset.created_at.isoformat() if brand_asset.created_at else ""
         )
         

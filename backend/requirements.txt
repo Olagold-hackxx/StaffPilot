@@ -79,3 +79,6 @@ flower==2.0.1  # Celery monitoring
 cloudinary
 pinecone
 aiosmtplib
+
+# OCR (for text verification in generated content)
+google-cloud-vision>=3.0.0

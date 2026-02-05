@@ -218,8 +218,13 @@ class ApiClient {
   }
 
   // Tenant endpoints
-  async getTenant(): Promise<{ name?: string; website_url?: string; [key: string]: any }> {
-    return this.request<{ name?: string; website_url?: string; [key: string]: any }>('/tenants/me');
+  async getTenant(): Promise<{ name?: string; website_url?: string; brand_colors?: string[]; [key: string]: any }> {
+    return this.request<{ name?: string; website_url?: string; brand_colors?: string[]; [key: string]: any }>('/tenants/me');
+  }
+
+  // Alias for getTenant - used by brand assets page
+  async getCurrentTenant(): Promise<{ name?: string; website_url?: string; brand_colors?: string[]; [key: string]: any }> {
+    return this.getTenant();
   }
 
   async updateTenant(data: any) {
@@ -227,6 +232,11 @@ class ApiClient {
       method: 'PATCH',
       body: JSON.stringify(data),
     });
+  }
+
+  // Alias for updateTenant - used by brand assets page  
+  async updateCurrentTenant(data: any) {
+    return this.updateTenant(data);
   }
 
   // Assistant endpoints

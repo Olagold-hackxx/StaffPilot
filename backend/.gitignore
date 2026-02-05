@@ -72,3 +72,6 @@ chroma_db/
 # SSL certificates
 /tmp/postgres-ca.crt
 postgres-ca.crt*
+
+
+ocr-keys.json
