@@ -600,7 +600,8 @@ async def _upload_media_async(
 async def _generate_video_async(
     prompt: str,
     duration_seconds: Optional[int] = None,
-    tenant_id: Optional[str] = None
+    tenant_id: Optional[str] = None,
+    brand_asset_ids: Optional[List[str]] = None
 ) -> Dict[str, Any]:
     """
     Async helper function to generate video using AI.
@@ -647,7 +648,12 @@ async def _generate_video_async(
         reference_images = []
         has_logo = False
         if tenant_id:
-            reference_images, has_logo = _fetch_brand_asset_bytes(tenant_id, limit=5)  # Increased to 5 for better style extraction
+            reference_images, has_logo = _fetch_brand_asset_bytes(
+                tenant_id=tenant_id,
+                asset_ids=brand_asset_ids,  # User-selected (or None for random)
+                include_logo=True,  # Always include logo
+                max_random=2  # Max 2 random if no selection
+            )
             if reference_images:
                 logger.info(f"Using {len(reference_images)} brand assets as reference images for video generation")
         

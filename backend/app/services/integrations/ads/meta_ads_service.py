@@ -1,7 +1,6 @@
 """
 Meta Ads Campaign Service
 """
-import asyncio
 import json
 from typing import Dict, Any, Optional, List
 from datetime import datetime, date
@@ -17,7 +16,11 @@ class MetaAdsCampaignService:
     
     def __init__(self, access_token: str, ad_account_id: str):
         self.access_token = access_token
+        # Ensure ad_account_id always has act_ prefix
+        if ad_account_id and not ad_account_id.startswith("act_"):
+            ad_account_id = f"act_{ad_account_id}"
         self.ad_account_id = ad_account_id
+        logger.info(f"MetaAdsCampaignService initialized with ad_account_id: {self.ad_account_id}")
     
     async def _make_api_request(
         self,
@@ -31,21 +34,15 @@ class MetaAdsCampaignService:
         
         if params is None:
             params = {}
-        # Don't log the full access token, just show it's present
-        access_token = self.access_token
-        params['access_token'] = access_token
+        params['access_token'] = self.access_token
         
         # Log request details (without full token)
-        logger.info(f"Meta API Request - Method: {method}, Endpoint: {endpoint}")
-        logger.info(f"Meta API Request - URL: {url}")
+        logger.info(f"Meta API {method} -> {endpoint}")
         if data:
-            logger.info(f"Meta API Request - Payload (data): {json.dumps(data, indent=2)}")
-        # Log params but mask access token
-        safe_params = {k: (v if k != 'access_token' else f"{v[:20]}...{v[-10:]}" if len(v) > 30 else "***") for k, v in params.items()}
-        logger.info(f"Meta API Request - Params: {json.dumps(safe_params, indent=2)}")
+            logger.info(f"Meta API Payload: {json.dumps(data, indent=2)}")
         
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=30.0) as client:
                 if method == 'GET':
                     response = await client.get(url, params=params)
                 elif method == 'POST':
@@ -57,24 +54,29 @@ class MetaAdsCampaignService:
                 else:
                     return {"success": False, "error": "Invalid HTTP method"}
                 
+                # Log response status
+                logger.info(f"Meta API Response Status: {response.status_code}")
+                
                 response.raise_for_status()
-                return {"success": True, "data": response.json()}
+                response_data = response.json()
+                logger.info(f"Meta API Response: {json.dumps(response_data, indent=2)}")
+                return {"success": True, "data": response_data}
                 
         except httpx.HTTPStatusError as e:
             try:
                 error_data = e.response.json()
-                error_message = error_data.get('error', {}).get('error_user_msg', str(e))
+                error_message = error_data.get('error', {}).get('error_user_msg') or error_data.get('error', {}).get('message', str(e))
                 error_code = error_data.get('error', {}).get('code', '')
                 error_type = error_data.get('error', {}).get('type', '')
                 error_subcode = error_data.get('error', {}).get('error_subcode', '')
                 
-                logger.error(f"Meta API request failed - Status: {e.response.status_code}")
-                logger.error(f"Meta API request failed - Error Type: {error_type}, Code: {error_code}, Subcode: {error_subcode}")
-                logger.error(f"Meta API request failed - Error Message: {error_message}")
-                logger.error(f"Meta API request failed - Full Error Response: {json.dumps(error_data, indent=2)}")
+                logger.error(f"Meta API FAILED - Status: {e.response.status_code}")
+                logger.error(f"Meta API FAILED - Type: {error_type}, Code: {error_code}, Subcode: {error_subcode}")
+                logger.error(f"Meta API FAILED - Message: {error_message}")
+                logger.error(f"Meta API FAILED - Full Response: {json.dumps(error_data, indent=2)}")
             except Exception as parse_error:
-                logger.error(f"Meta API request failed - Could not parse error response: {parse_error}")
-                logger.error(f"Meta API request failed - Raw response: {e.response.text}")
+                logger.error(f"Meta API FAILED - Could not parse error: {parse_error}")
+                logger.error(f"Meta API FAILED - Raw response: {e.response.text}")
                 error_message = str(e)
             return {"success": False, "error": error_message}
         except Exception as e:
@@ -87,7 +89,8 @@ class MetaAdsCampaignService:
         objective: str,
         daily_budget: Optional[float] = None,
         lifetime_budget: Optional[float] = None,
-        status: str = "PAUSED"
+        status: str = "PAUSED",
+        special_ad_categories: Optional[list] = None
     ) -> Dict[str, Any]:
         """
         Create a Meta Ads campaign
@@ -98,6 +101,7 @@ class MetaAdsCampaignService:
             daily_budget: Daily budget in dollars
             lifetime_budget: Lifetime budget in dollars
             status: Campaign status (PAUSED, ACTIVE)
+            special_ad_categories: Special ad categories if needed
         
         Returns:
             Dictionary with campaign_id and success status
@@ -117,11 +121,18 @@ class MetaAdsCampaignService:
         if lifetime_budget:
             campaign_data['lifetime_budget'] = str(int(lifetime_budget * 100))  # Convert to cents
         
+        if special_ad_categories:
+            campaign_data['special_ad_categories'] = special_ad_categories
+        
+        logger.info(f"Creating Meta campaign: {name} (objective={objective}, budget={daily_budget or lifetime_budget})")
         result = await self._make_api_request(endpoint, 'POST', data=campaign_data)
         
         if result['success']:
-            return {"success": True, "campaign_id": result['data']['id']}
+            campaign_id = result['data']['id']
+            logger.info(f"✅ Meta campaign created: {campaign_id}")
+            return {"success": True, "campaign_id": campaign_id}
         else:
+            logger.error(f"❌ Meta campaign creation failed: {result['error']}")
             return {"success": False, "error": result['error']}
     
     async def create_ad_set(
@@ -170,11 +181,15 @@ class MetaAdsCampaignService:
         if end_time:
             ad_set_data['end_time'] = end_time.isoformat()
         
+        logger.info(f"Creating Meta ad set: {name} (campaign={campaign_id})")
         result = await self._make_api_request(endpoint, 'POST', data=ad_set_data)
         
         if result['success']:
-            return {"success": True, "ad_set_id": result['data']['id']}
+            ad_set_id = result['data']['id']
+            logger.info(f"✅ Meta ad set created: {ad_set_id}")
+            return {"success": True, "ad_set_id": ad_set_id}
         else:
+            logger.error(f"❌ Meta ad set creation failed: {result['error']}")
             return {"success": False, "error": result['error']}
     
     async def create_ad_creative(
@@ -192,44 +207,57 @@ class MetaAdsCampaignService:
         
         # Build object_story_spec for page post
         if page_id:
-            # For page posts, use link_data (simpler and more reliable)
+            # For page posts, use link_data
+            link_data = {
+                "link": link_url,
+                "message": body,
+                "name": title,
+                "call_to_action": {
+                    "type": call_to_action_type
+                }
+            }
+            
+            # Add image URL if available
+            if image_url:
+                link_data["image_url"] = image_url
+            
             object_story_spec = {
                 "page_id": page_id,
-                "link_data": {
-                    "link": link_url,
-                    "message": body,
-                    "name": title,
-                    "call_to_action": {
-                        "type": call_to_action_type
-                    }
-                }
+                "link_data": link_data
             }
         else:
             # Create creative without page_id (for app ads or other types)
-            object_story_spec = {
-                "link_data": {
-                    "link": link_url,
-                    "message": body,
-                    "name": title,
-                    "call_to_action": {
-                        "type": call_to_action_type
-                    }
+            link_data = {
+                "link": link_url,
+                "message": body,
+                "name": title,
+                "call_to_action": {
+                    "type": call_to_action_type
                 }
             }
-        
-        if image_url:
-            object_story_spec["link_data"]["image_url"] = image_url
+            
+            if image_url:
+                link_data["image_url"] = image_url
+            
+            object_story_spec = {
+                "link_data": link_data
+            }
         
         creative_data = {
             "name": name,
             "object_story_spec": json.dumps(object_story_spec),
         }
         
+        logger.info(f"Creating Meta creative: {name} (page={page_id})")
+        logger.info(f"Creative object_story_spec: {json.dumps(object_story_spec, indent=2)}")
         result = await self._make_api_request(endpoint, 'POST', data=creative_data)
         
         if result['success']:
-            return {"success": True, "creative_id": result['data']['id']}
+            creative_id = result['data']['id']
+            logger.info(f"✅ Meta creative created: {creative_id}")
+            return {"success": True, "creative_id": creative_id}
         else:
+            logger.error(f"❌ Meta creative creation failed: {result['error']}")
             return {"success": False, "error": result['error']}
     
     async def create_ad(
@@ -249,10 +277,13 @@ class MetaAdsCampaignService:
             'status': status,
         }
         
+        logger.info(f"Creating Meta ad: {name} (ad_set={ad_set_id}, creative={creative_id})")
         result = await self._make_api_request(endpoint, 'POST', data=ad_data)
         
         if result['success']:
-            return {"success": True, "ad_id": result['data']['id']}
+            ad_id = result['data']['id']
+            logger.info(f"✅ Meta ad created: {ad_id}")
+            return {"success": True, "ad_id": ad_id}
         else:
+            logger.error(f"❌ Meta ad creation failed: {result['error']}")
             return {"success": False, "error": result['error']}
-

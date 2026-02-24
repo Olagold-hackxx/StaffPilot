@@ -1231,8 +1231,8 @@ IMPORTANT: Ensure all text in the generated media is in English and free of spel
                         from app.services.text_verification_service import verify_and_correct_content
                         
                         verification = verify_and_correct_content(
-                            media_bytes=video_bytes_raw,
-                            media_type="video",
+                            media_bytes=img_bytes_raw,
+                            media_type="image",
                             original_prompt=current_prompt,
                             allowed_terms=[campaign_name]
                         )
@@ -1870,13 +1870,118 @@ def generate_images_task(
             campaign_name = campaign.name
             product_brief = campaign.product_brief or campaign.description or ""
             
-            image_prompt = f"""Create a professional advertising image for:
+            # Fetch brand assets for reference images (logo + random)
+            reference_image_bytes = []
+            has_logo = False
+            brand_colors = []
+            
+            try:
+                from app.models.tenant import Tenant
+                tenant_result = db.execute(
+                    select(Tenant).where(Tenant.id == UUID(tenant_id))
+                )
+                tenant = tenant_result.scalar_one_or_none()
+                if tenant and tenant.brand_colors:
+                    brand_colors = tenant.brand_colors
+            except Exception as e:
+                logger.warning(f"Failed to fetch tenant brand colors: {e}")
+            
+            try:
+                from app.models.brand_asset import BrandAsset
+                import httpx
+                
+                selected_assets = []
+                logo_asset = None
+                
+                # Fetch logo asset
+                logo_result = db.execute(
+                    select(BrandAsset)
+                    .where(BrandAsset.tenant_id == UUID(tenant_id))
+                    .where(BrandAsset.asset_type == "image")
+                    .where(BrandAsset.is_active == True)
+                    .where(BrandAsset.is_logo == True)
+                    .limit(1)
+                )
+                logo_asset = logo_result.scalar_one_or_none()
+                if logo_asset:
+                    selected_assets.append(logo_asset)
+                    has_logo = True
+                    logger.info(f"Found logo asset: {logo_asset.name}")
+                
+                # Fetch additional assets (up to 2 more)
+                remaining_slots = 2
+                if remaining_slots > 0:
+                    asset_result = db.execute(
+                        select(BrandAsset)
+                        .where(BrandAsset.tenant_id == UUID(tenant_id))
+                        .where(BrandAsset.asset_type == "image")
+                        .where(BrandAsset.is_active == True)
+                        .where(BrandAsset.is_logo == False)
+                        .limit(remaining_slots)
+                    )
+                    other_assets = asset_result.scalars().all()
+                    selected_assets.extend(other_assets)
+                
+                # Download asset bytes
+                for asset in selected_assets:
+                    try:
+                        if asset.url:
+                            with httpx.Client(timeout=30.0) as client:
+                                response = client.get(asset.url)
+                                if response.status_code == 200:
+                                    reference_image_bytes.append(response.content)
+                                    logger.info(f"Fetched brand asset: {asset.name}")
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch asset {asset.id}: {e}")
+            except Exception as e:
+                logger.warning(f"Failed to fetch brand assets: {e}")
+            
+            # Logo instruction
+            logo_instruction = ""
+            if has_logo:
+                logo_instruction = "\n=== CRITICAL - LOGO REQUIREMENT (NON-NEGOTIABLE) ===\nOne of the reference images is the BRAND LOGO. This logo MUST appear prominently in the image. Use the EXACT colors, text, and details. Do NOT redraw or stylize. FAILURE TO INCLUDE THE LOGO IS UNACCEPTABLE.\n==================================================="
+            
+            # Brand colors instruction
+            brand_colors_instruction = ""
+            if brand_colors:
+                colors_str = ", ".join(brand_colors)
+                brand_colors_instruction = f"\nBRAND COLORS: Use these exact colors in the design: {colors_str}"
+            
+            # Style extraction
+            style_prompt = ""
+            if reference_image_bytes:
+                try:
+                    from app.services.style_extraction_service import extract_style_prompt_sync, get_enhanced_generation_prompt
+                    style_prompt = extract_style_prompt_sync(
+                        reference_images=reference_image_bytes,
+                        brand_colors=brand_colors,
+                        company_name=campaign_name
+                    )
+                    if style_prompt:
+                        logger.info(f"Extracted style prompt ({len(style_prompt)} chars)")
+                except Exception as e:
+                    logger.warning(f"Style extraction failed: {e}")
+            
+            base_prompt = f"""Create a professional advertising image for:
 Campaign: {campaign_name}
 Product/Service: {product_brief}
 
 Style: Modern, clean, professional advertising photography.
 Use: Google Ads and social media marketing.
 Make it visually striking and suitable for digital advertising."""
+            
+            # Build enhanced prompt with style
+            if style_prompt:
+                from app.services.style_extraction_service import get_enhanced_generation_prompt
+                image_prompt = get_enhanced_generation_prompt(
+                    user_prompt=base_prompt,
+                    style_prompt=style_prompt,
+                    logo_instruction=logo_instruction
+                )
+                if brand_colors_instruction and brand_colors_instruction not in image_prompt:
+                    image_prompt += brand_colors_instruction
+            else:
+                image_prompt = base_prompt + logo_instruction + brand_colors_instruction
 
             # Generate images
             llm_service = create_llm_service()
@@ -1887,7 +1992,8 @@ Make it visually striking and suitable for digital advertising."""
                     logger.info(f"Generating image {i+1}/{count}...")
                     image_data = llm_service.generate_image_sync(
                         prompt=image_prompt,
-                        aspect_ratio="1:1"
+                        aspect_ratio="1:1",
+                        reference_images=reference_image_bytes if reference_image_bytes else None
                     )
                     
                     if image_data:
@@ -1983,25 +2089,146 @@ def generate_videos_task(
             campaign_name = campaign.name
             product_brief = campaign.product_brief or campaign.description or ""
             
-            video_prompt = f"""Create a professional advertising video for:
+            # Fetch brand assets for reference images (logo + random)
+            reference_image_bytes = []
+            has_logo = False
+            brand_colors = []
+            
+            try:
+                from app.models.tenant import Tenant
+                tenant_result = db.execute(
+                    select(Tenant).where(Tenant.id == UUID(tenant_id))
+                )
+                tenant = tenant_result.scalar_one_or_none()
+                if tenant and tenant.brand_colors:
+                    brand_colors = tenant.brand_colors
+            except Exception as e:
+                logger.warning(f"Failed to fetch tenant brand colors for video: {e}")
+            
+            try:
+                from app.models.brand_asset import BrandAsset
+                import httpx
+                
+                selected_assets = []
+                logo_asset = None
+                
+                # Fetch logo asset
+                logo_result = db.execute(
+                    select(BrandAsset)
+                    .where(BrandAsset.tenant_id == UUID(tenant_id))
+                    .where(BrandAsset.asset_type == "image")
+                    .where(BrandAsset.is_active == True)
+                    .where(BrandAsset.is_logo == True)
+                    .limit(1)
+                )
+                logo_asset = logo_result.scalar_one_or_none()
+                if logo_asset:
+                    selected_assets.append(logo_asset)
+                    has_logo = True
+                    logger.info(f"Found logo asset for video: {logo_asset.name}")
+                
+                # Fetch additional assets (up to 2 more)
+                remaining_slots = 2
+                if remaining_slots > 0:
+                    asset_result = db.execute(
+                        select(BrandAsset)
+                        .where(BrandAsset.tenant_id == UUID(tenant_id))
+                        .where(BrandAsset.asset_type == "image")
+                        .where(BrandAsset.is_active == True)
+                        .where(BrandAsset.is_logo == False)
+                        .limit(remaining_slots)
+                    )
+                    other_assets = asset_result.scalars().all()
+                    selected_assets.extend(other_assets)
+                
+                # Download asset bytes
+                for asset in selected_assets:
+                    try:
+                        if asset.url:
+                            with httpx.Client(timeout=30.0) as client:
+                                response = client.get(asset.url)
+                                if response.status_code == 200:
+                                    reference_image_bytes.append(response.content)
+                                    logger.info(f"Fetched brand asset for video: {asset.name}")
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch asset {asset.id}: {e}")
+            except Exception as e:
+                logger.warning(f"Failed to fetch brand assets for video: {e}")
+            
+            # Logo instruction
+            logo_instruction = ""
+            if has_logo:
+                logo_instruction = "\n=== CRITICAL - LOGO REQUIREMENT (NON-NEGOTIABLE) ===\nOne of the reference images is the BRAND LOGO. This logo MUST appear prominently in the video. Use the EXACT colors, text, and details. Do NOT redraw or stylize. FAILURE TO INCLUDE THE LOGO IS UNACCEPTABLE.\n==================================================="
+            
+            # Brand colors instruction
+            brand_colors_instruction = ""
+            if brand_colors:
+                colors_str = ", ".join(brand_colors)
+                brand_colors_instruction = f"\nBRAND COLORS: Use these exact colors in the video: {colors_str}"
+            
+            # Style extraction
+            style_prompt = ""
+            if reference_image_bytes:
+                try:
+                    from app.services.style_extraction_service import extract_style_prompt_sync, get_enhanced_generation_prompt
+                    style_prompt = extract_style_prompt_sync(
+                        reference_images=reference_image_bytes,
+                        brand_colors=brand_colors,
+                        company_name=campaign_name
+                    )
+                    if style_prompt:
+                        logger.info(f"Extracted style prompt for video ({len(style_prompt)} chars)")
+                except Exception as e:
+                    logger.warning(f"Style extraction failed for video: {e}")
+            
+            base_prompt = f"""Create a professional advertising video for:
 Campaign: {campaign_name}
 Product/Service: {product_brief}
 
 Style: Modern, dynamic, professional video suitable for YouTube ads and social media.
 Duration: {duration} seconds.
 Make it engaging and attention-grabbing from the first second."""
+            
+            # Build enhanced prompt with style
+            if style_prompt:
+                from app.services.style_extraction_service import get_enhanced_generation_prompt
+                video_prompt = get_enhanced_generation_prompt(
+                    user_prompt=base_prompt,
+                    style_prompt=style_prompt,
+                    logo_instruction=logo_instruction
+                )
+                if brand_colors_instruction and brand_colors_instruction not in video_prompt:
+                    video_prompt += brand_colors_instruction
+            else:
+                video_prompt = base_prompt + logo_instruction + brand_colors_instruction
 
             # Generate video
             llm_service = create_llm_service()
             video_urls = []
             
             try:
-                logger.info(f"Generating {duration}s video - this may take 2-10 minutes...")
-                video_data = llm_service.generate_video_sync(
-                    prompt=video_prompt,
-                    duration_seconds=duration,
-                    aspect_ratio="16:9"
-                )
+                logger.info(f"Generating {duration}s video with {len(reference_image_bytes)} references - this may take 2-10 minutes...")
+                
+                # Use extended video generation with references when available
+                if hasattr(llm_service, 'generate_extended_video_sync'):
+                    video_data = llm_service.generate_extended_video_sync(
+                        prompt=video_prompt,
+                        target_duration_seconds=duration,
+                        reference_images=reference_image_bytes if reference_image_bytes else None,
+                        aspect_ratio="16:9"
+                    )
+                elif reference_image_bytes and hasattr(llm_service, 'generate_video_with_references_sync'):
+                    video_data = llm_service.generate_video_with_references_sync(
+                        prompt=video_prompt,
+                        reference_images=reference_image_bytes,
+                        aspect_ratio="16:9"
+                    )
+                else:
+                    video_data = llm_service.generate_video_sync(
+                        prompt=video_prompt,
+                        duration_seconds=duration,
+                        aspect_ratio="16:9"
+                    )
                 
                 if video_data:
                     storage = get_storage()
@@ -2138,17 +2365,85 @@ def generate_videos_with_assets_task(
             
             logger.info(f"Loaded {len(reference_images)} reference images")
             
-            # Build video prompt
+            # Fetch brand colors and detect logo
             campaign_name = campaign.name
             product_brief = campaign.product_brief or campaign.description or ""
+            brand_colors = []
+            has_logo = False
             
-            video_prompt = f"""Create a professional advertising video for:
+            try:
+                from app.models.tenant import Tenant
+                tenant_result = db.execute(
+                    select(Tenant).where(Tenant.id == UUID(tenant_id))
+                )
+                tenant = tenant_result.scalar_one_or_none()
+                if tenant and tenant.brand_colors:
+                    brand_colors = tenant.brand_colors
+            except Exception as e:
+                logger.warning(f"Failed to fetch tenant brand colors: {e}")
+            
+            # Check if any of the provided assets is a logo
+            if brand_asset_ids:
+                try:
+                    logo_check = db.execute(
+                        select(BrandAsset).where(
+                            BrandAsset.tenant_id == UUID(tenant_id),
+                            BrandAsset.is_logo == True,
+                            BrandAsset.id.in_([UUID(aid) for aid in brand_asset_ids])
+                        )
+                    )
+                    if logo_check.scalar_one_or_none():
+                        has_logo = True
+                except Exception:
+                    pass
+            
+            # Logo instruction
+            logo_instruction = ""
+            if has_logo:
+                logo_instruction = "\n=== CRITICAL - LOGO REQUIREMENT (NON-NEGOTIABLE) ===\nOne of the reference images is the BRAND LOGO. This logo MUST appear prominently in the video. Use the EXACT colors, text, and details. Do NOT redraw or stylize. FAILURE TO INCLUDE THE LOGO IS UNACCEPTABLE.\n==================================================="
+            
+            # Brand colors instruction
+            brand_colors_instruction = ""
+            if brand_colors:
+                colors_str = ", ".join(brand_colors)
+                brand_colors_instruction = f"\nBRAND COLORS: Use these exact colors in the video: {colors_str}"
+            
+            # Style extraction
+            style_prompt = ""
+            if reference_images:
+                try:
+                    from app.services.style_extraction_service import extract_style_prompt_sync, get_enhanced_generation_prompt
+                    style_prompt = extract_style_prompt_sync(
+                        reference_images=reference_images,
+                        brand_colors=brand_colors,
+                        company_name=campaign_name
+                    )
+                    if style_prompt:
+                        logger.info(f"Extracted style prompt for video with assets ({len(style_prompt)} chars)")
+                except Exception as e:
+                    logger.warning(f"Style extraction failed: {e}")
+            
+            # Build video prompt
+            base_prompt = f"""Create a professional advertising video for:
 Campaign: {campaign_name}
 Product/Service: {product_brief}
 
 Style: Modern, dynamic, professional video suitable for YouTube ads and social media.
 Duration: {target_duration} seconds.
 Make it engaging and attention-grabbing from the first second."""
+            
+            # Build enhanced prompt with style
+            if style_prompt:
+                from app.services.style_extraction_service import get_enhanced_generation_prompt
+                video_prompt = get_enhanced_generation_prompt(
+                    user_prompt=base_prompt,
+                    style_prompt=style_prompt,
+                    logo_instruction=logo_instruction
+                )
+                if brand_colors_instruction and brand_colors_instruction not in video_prompt:
+                    video_prompt += brand_colors_instruction
+            else:
+                video_prompt = base_prompt + logo_instruction + brand_colors_instruction
 
             # Generate video with assets and extension
             llm_service = create_llm_service()

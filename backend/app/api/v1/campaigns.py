@@ -449,6 +449,10 @@ async def approve_campaign(
                         errors.append("Meta Ads: No ad account ID found. Please reconnect your Meta Ads account.")
                         continue
                     
+                    # Ensure ad_account_id has act_ prefix (the service also does this but be explicit)
+                    if not str(ad_account_id).startswith("act_"):
+                        ad_account_id = f"act_{ad_account_id}"
+                    
                     logger.info(f"Meta Ads: Using ad account ID: {ad_account_id}")
                     
                     meta_service = MetaAdsCampaignService(
@@ -461,7 +465,11 @@ async def approve_campaign(
                     if pages and isinstance(pages, list) and len(pages) > 0:
                         page_id = pages[0].get("id") if isinstance(pages[0], dict) else pages[0]
                     
-                    # If no page from pages, try to get from organizations
+                    # If no page from pages, try default_page_id in meta_data
+                    if not page_id and integration.meta_data:
+                        page_id = integration.meta_data.get("default_page_id")
+                    
+                    # If still no page, try to get from organizations
                     if not page_id and integration.organizations:
                         for org in integration.organizations:
                             if org.get("page_id"):
@@ -470,7 +478,12 @@ async def approve_campaign(
                     
                     logger.info(f"Meta Ads: Using page ID: {page_id}")
                     
+                    if not page_id:
+                        logger.warning("Meta Ads: No page ID found - creative creation may fail. "
+                                      "User should connect a Facebook Page.")
+                    
                     # Create campaign
+                    logger.info(f"Meta Ads: Step 1/4 - Creating campaign...")
                     campaign_result = await meta_service.create_campaign(
                         name=campaign.name,
                         objective=plan.get("objective", "LINK_CLICKS"),
@@ -480,8 +493,10 @@ async def approve_campaign(
                     
                     if campaign_result.get("success"):
                         meta_campaign_id = campaign_result.get("campaign_id")
+                        logger.info(f"Meta Ads: Campaign created: {meta_campaign_id}")
                         
                         # Create ad set with bid_amount if available
+                        logger.info(f"Meta Ads: Step 2/4 - Creating ad set...")
                         bid_amount = plan.get("bid_amount")
                         ad_set_result = await meta_service.create_ad_set(
                             campaign_id=meta_campaign_id,
@@ -496,9 +511,26 @@ async def approve_campaign(
                         
                         if ad_set_result.get("success"):
                             ad_set_id = ad_set_result.get("ad_set_id")
+                            logger.info(f"Meta Ads: Ad set created: {ad_set_id}")
                             
-                            # Get image URL from ad_copy if available
+                            # Collect image URLs from campaign plan steps
                             image_url = ad_copy.get("image_url")
+                            if not image_url:
+                                # Look through plan steps for generated images
+                                for step in plan.get("steps", []):
+                                    step_result = step.get("result", {})
+                                    if step_result and step_result.get("image_urls"):
+                                        image_urls_list = step_result.get("image_urls", [])
+                                        if image_urls_list:
+                                            image_url = image_urls_list[0]  # Use first image
+                                            break
+                                # Also check plan-level generated images
+                                if not image_url and plan.get("generated_images"):
+                                    gen_images = plan.get("generated_images", [])
+                                    if gen_images:
+                                        image_url = gen_images[0]
+                            
+                            logger.info(f"Meta Ads: Image URL for creative: {image_url}")
                             
                             # Determine link URL - check multiple sources
                             link_url_val = (
@@ -514,6 +546,7 @@ async def approve_campaign(
                                 continue
 
                             # Create ad creative
+                            logger.info(f"Meta Ads: Step 3/4 - Creating creative...")
                             creative_result = await meta_service.create_ad_creative(
                                 name=f"{campaign.name} Creative",
                                 page_id=page_id,
@@ -525,8 +558,10 @@ async def approve_campaign(
                             
                             if creative_result.get("success"):
                                 creative_id = creative_result.get("creative_id")
+                                logger.info(f"Meta Ads: Creative created: {creative_id}")
                                 
                                 # Create ad
+                                logger.info(f"Meta Ads: Step 4/4 - Creating ad...")
                                 ad_result = await meta_service.create_ad(
                                     ad_set_id=ad_set_id,
                                     name=f"{campaign.name} Ad",
@@ -535,6 +570,7 @@ async def approve_campaign(
                                 )
                                 
                                 if ad_result.get("success"):
+                                    logger.info(f"Meta Ads: ✅ Ad created successfully: {ad_result.get('ad_id')}")
                                     # Create campaign asset record
                                     asset = CampaignAsset(
                                         campaign_id=campaign.id,

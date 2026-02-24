@@ -115,7 +115,11 @@ Focus on:
 
 3. **VISUAL STYLE**: Is it modern, classic, minimalist, bold, playful, professional? What defines the aesthetic?
 
-4. **TYPOGRAPHY FEEL**: Sans-serif or serif? Bold or light? How does text appear in the brand materials?
+4. **TYPOGRAPHY & FONTS** (CRITICAL):
+    *   **Primary Font**: Identify the primary font used for headlines/logos (or the closest Google Font match if custom). Is it a Serif, Sans-Serif, Script, or Display font?
+    *   **Secondary Font**: Identify the secondary font used for body text or subheadings.
+    *   **Weights & Styles**: meaningful details like "Bold uppercase for headlines", "Light elegant serif for body", "Wide tracking/letter-spacing".
+    *   **Do's & Don'ts**: explicit instructions on what font styles to AVOID (e.g., "Never use Comic Sans", "Avoid script fonts", "No drop shadows on text").
 
 5. **COMPOSITION PATTERNS**: How are elements arranged? Clean layouts? Busy? Centered or asymmetric?
 
@@ -123,7 +127,7 @@ Focus on:
 
 Return a SINGLE PARAGRAPH that can be directly used as a generation prompt prefix. Start with "Create content in this brand style:" and describe how to replicate this exact visual identity.
 
-Be specific about colors (use hex codes if visible), logo placement, and visual elements. The goal is that AI-generated images using this prompt will look like they belong to the same brand.
+Be specific about colors (use hex codes if visible), logo placement, and especially TYPOGRAPHY. The goal is that AI-generated images using this prompt will look like they belong to the same brand.
 
 IMPORTANT: Focus on visual elements that can be replicated. Don't describe what the images show, describe HOW they look visually."""
 
