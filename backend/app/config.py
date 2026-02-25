@@ -72,7 +72,7 @@ class Settings(BaseSettings):
     GOOGLE_MODEL_CONTENT: str = "gemini-2.5-flash"  # For content generation
     GOOGLE_MODEL_IMAGE: str = "gemini-3-pro-image-preview"  # For image generation (Gemini 3 Pro Image Preview)
     GOOGLE_MODEL_VIDEO: str = "veo-3.1-generate-preview"  # For video generation (with audio)
-    GOOGLE_EMBEDDING_MODEL: str = "text-embedding-004"  # For embeddings
+    GOOGLE_EMBEDDING_MODEL: str = "gemini-embedding-001"  # For embeddings
     
     # OpenAI Model Configuration
     OPENAI_MODEL_CONTENT: str = "gpt-4o"  # For content generation

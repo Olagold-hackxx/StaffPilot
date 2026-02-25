@@ -1317,10 +1317,10 @@ Return your response as valid JSON only. Do not include any markdown formatting 
         texts: List[str],
         task_type: str = "RETRIEVAL_DOCUMENT"
     ) -> List[List[float]]:
-        """Generate embeddings using Google text-embedding-004"""
+        """Generate embeddings using Google gemini-embedding-001"""
         
         try:
-            model_name = self.embedding_model_name or "text-embedding-004"
+            model_name = self.embedding_model_name or "gemini-embedding-001"
             
             # Use the new API for embeddings
             # The new API doesn't support task_type parameter

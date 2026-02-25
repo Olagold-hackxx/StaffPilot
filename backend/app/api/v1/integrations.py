@@ -982,44 +982,7 @@ async def _exchange_token(
                 logger.info(f"[Facebook OAuth] Regular pages response: {pages_json}")
                 pages = pages_json.get("data", [])
                 
-                # Also fetch Business Manager pages
-                try:
-                    # Get user's businesses
-                    businesses_response = await client.get(
-                        "https://graph.facebook.com/v18.0/me/businesses",
-                        headers={"Authorization": f"Bearer {access_token}"},
-                        params={"fields": "id,name", "limit": 100}
-                    )
-                    businesses_json = businesses_response.json()
-                    logger.info(f"[Facebook OAuth] Businesses response: {businesses_json}")
-                    
-                    # Track existing page IDs to avoid duplicates
-                    existing_page_ids = {p.get("id") for p in pages}
-                    
-                    # For each business, get owned pages
-                    for business in businesses_json.get("data", []):
-                        business_id = business.get("id")
-                        if business_id:
-                            biz_pages_response = await client.get(
-                                f"https://graph.facebook.com/v18.0/{business_id}/owned_pages",
-                                headers={"Authorization": f"Bearer {access_token}"},
-                                params={"fields": "id,name,access_token,link,picture{url}", "limit": 100}
-                            )
-                            biz_pages_json = biz_pages_response.json()
-                            logger.info(f"[Facebook OAuth] Business {business_id} pages: {biz_pages_json}")
-                            
-                            # Add pages that aren't already in the list
-                            for biz_page in biz_pages_json.get("data", []):
-                                if biz_page.get("id") not in existing_page_ids:
-                                    biz_page["from_business_manager"] = True
-                                    biz_page["business_id"] = business_id
-                                    biz_page["business_name"] = business.get("name")
-                                    pages.append(biz_page)
-                                    existing_page_ids.add(biz_page.get("id"))
-                except Exception as biz_err:
-                    # Don't fail the whole OAuth if business pages fetch fails
-                    logger.warning(f"[Facebook OAuth] Failed to fetch Business Manager pages: {biz_err}")
-                
+
                 logger.info(f"[Facebook OAuth] Total pages found: {len(pages)}")
                 return access_token, None, token_expires_at, profile_data, pages, [], None
             

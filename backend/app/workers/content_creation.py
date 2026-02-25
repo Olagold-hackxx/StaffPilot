@@ -1860,6 +1860,18 @@ def execute_content_creation(
                 image_urls = []
                 video_urls = []
                 
+                # Fetch tenant info for brand context in media generation
+                from app.models.tenant import Tenant
+                tenant_result = db.execute(
+                    select(Tenant).where(Tenant.id == UUID(tenant_id))
+                )
+                tenant = tenant_result.scalar_one_or_none()
+                
+                # Extract brand context from tenant
+                company_name = tenant.name if tenant else None
+                brand_voice = tenant.brand_voice if tenant else None
+                target_audience = tenant.target_audience if tenant else None
+                
                 if include_images:
                     logger.info("[TASK 4/6] Generating images...")
                     try:
@@ -1875,18 +1887,6 @@ def execute_content_creation(
                         
                         # Format platform name nicely (capitalize first letter)
                         platform_name = first_platform.capitalize() if first_platform else "Social media"
-                        
-                        # Fetch tenant info for brand context in image generation
-                        from app.models.tenant import Tenant
-                        tenant_result = db.execute(
-                            select(Tenant).where(Tenant.id == UUID(tenant_id))
-                        )
-                        tenant = tenant_result.scalar_one_or_none()
-                        
-                        # Extract brand context from tenant
-                        company_name = tenant.name if tenant else None
-                        brand_voice = tenant.brand_voice if tenant else None
-                        target_audience = tenant.target_audience if tenant else None
                         
                         logger.info(f"[TASK 4/6] Brand context: company={company_name}, voice={brand_voice}")
                         
@@ -2257,6 +2257,9 @@ def execute_content_creation(
                                     if page.get("instagram_business_account"):
                                         ig_user_id = page.get("instagram_business_account", {}).get("id")
                                         logger.debug(f"[{platform}] Found ig_user_id from pages: {ig_user_id}")
+                                        if page.get("access_token"):
+                                            integration_data["page_access_token"] = page.get("access_token")
+                                            logger.debug(f"[{platform}] Found page_access_token from linked Facebook Page (during ig_user_id extraction)")
                                         break
                             
                             # Try from meta_data
@@ -2280,6 +2283,19 @@ def execute_content_creation(
                             
                             integration_data["ig_user_id"] = str(ig_user_id)
                             logger.info(f"[{platform}] Found ig_user_id: {ig_user_id}")
+                            
+                            # If we still don't have a page access token but we have pages, try to find one that might be linked
+                            if not integration_data.get("page_access_token") and integration.pages:
+                                for page in integration.pages if isinstance(integration.pages, list) else []:
+                                    if page.get("instagram_business_account", {}).get("id") == ig_user_id or str(page.get("instagram_business_account", {}).get("id")) == str(ig_user_id):
+                                        if page.get("access_token"):
+                                            integration_data["page_access_token"] = page.get("access_token")
+                                            logger.debug(f"[{platform}] Found page_access_token from linked Facebook Page matching ig_user_id")
+                                            break
+                                    # Fallback: if we just have one page and it has a token, use it
+                                    elif page.get("access_token"):
+                                        integration_data["page_access_token"] = page.get("access_token")
+                                        logger.debug(f"[{platform}] Using fallback page_access_token from first available Facebook Page")
                         
                         elif platform == "linkedin":
                             logger.info(f"[{platform}] Extracting LinkedIn parameters...")

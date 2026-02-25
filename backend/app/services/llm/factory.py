@@ -38,7 +38,7 @@ def create_llm_service(
             provider="gemini",
             model_config={
                 "content_model": "gemini-1.5-pro",
-                "embedding_model": "text-embedding-004"
+                "embedding_model": "gemini-embedding-001"
             }
         )
     """
@@ -69,7 +69,7 @@ def create_llm_service(
                 "content_model": getattr(settings, 'GOOGLE_MODEL_CONTENT', 'gemini-1.5-pro'),
                 "image_model": getattr(settings, 'GOOGLE_MODEL_IMAGE', 'gemini-3-pro-image-preview'),
                 "video_model": getattr(settings, 'GOOGLE_MODEL_VIDEO', 'veo-3.1-generate-preview'),
-                "embedding_model": getattr(settings, 'GOOGLE_EMBEDDING_MODEL', 'text-embedding-004')
+                "embedding_model": getattr(settings, 'GOOGLE_EMBEDDING_MODEL', 'gemini-embedding-001')
             }
         elif provider_enum == LLMProvider.OPENAI:
             model_config = {

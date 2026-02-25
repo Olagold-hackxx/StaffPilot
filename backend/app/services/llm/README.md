@@ -49,7 +49,7 @@ llm = create_llm_service(
     model_config={
         "content_model": "gemini-1.5-pro",
         "image_model": "imagen-3",
-        "embedding_model": "text-embedding-004"
+        "embedding_model": "gemini-embedding-001"
     }
 )
 
@@ -159,18 +159,21 @@ assistant_config = {
 ## Provider-Specific Features
 
 ### Gemini
+
 - ✅ Content generation
 - ✅ Image generation (Imagen 3)
 - ✅ Video generation (experimental)
-- ✅ Embeddings (text-embedding-004)
+- ✅ Embeddings (gemini-embedding-001)
 
 ### OpenAI
+
 - ✅ Content generation
 - ✅ Image generation (DALL-E 3)
 - ✅ Embeddings (text-embedding-3)
 - ❌ Video generation
 
 ### Anthropic
+
 - ✅ Content generation
 - ❌ Image generation
 - ❌ Video generation
@@ -209,11 +212,10 @@ class YourProviderService(BaseLLMService):
     def __init__(self, api_key: str, model_config: Dict):
         super().__init__(api_key, model_config)
         # Initialize your provider client
-    
+
     async def generate_content(self, prompt: str, ...):
         # Implement content generation
         pass
-    
+
     # ... implement other required methods
 ```
-

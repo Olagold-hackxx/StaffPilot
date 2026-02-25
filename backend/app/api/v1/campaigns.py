@@ -482,11 +482,36 @@ async def approve_campaign(
                         logger.warning("Meta Ads: No page ID found - creative creation may fail. "
                                       "User should connect a Facebook Page.")
                     
+                    # Map AI objective to valid Meta Ads ODAX objective
+                    raw_objective = str(plan.get("objective", "OUTCOME_TRAFFIC")).upper()
+                    
+                    valid_meta_objectives = [
+                        "APP_INSTALLS", "BRAND_AWARENESS", "EVENT_RESPONSES", "LEAD_GENERATION", 
+                        "LINK_CLICKS", "LOCAL_AWARENESS", "MESSAGES", "OFFER_CLAIMS", "PAGE_LIKES", 
+                        "POST_ENGAGEMENT", "PRODUCT_CATALOG_SALES", "REACH", "STORE_VISITS", 
+                        "VIDEO_VIEWS", "OUTCOME_AWARENESS", "OUTCOME_ENGAGEMENT", "OUTCOME_LEADS", 
+                        "OUTCOME_SALES", "OUTCOME_TRAFFIC", "OUTCOME_APP_PROMOTION", "CONVERSIONS"
+                    ]
+                    
+                    objective_mapping = {
+                        "CONVERSIONS": "OUTCOME_SALES",
+                        "TRAFFIC": "OUTCOME_TRAFFIC",
+                        "AWARENESS": "OUTCOME_AWARENESS",
+                        "ENGAGEMENT": "OUTCOME_ENGAGEMENT",
+                        "LEADS": "OUTCOME_LEADS",
+                        "APP_PROMOTION": "OUTCOME_APP_PROMOTION",
+                        "SALES": "OUTCOME_SALES"
+                    }
+                    
+                    meta_objective = raw_objective
+                    if meta_objective not in valid_meta_objectives:
+                        meta_objective = objective_mapping.get(meta_objective, "OUTCOME_TRAFFIC")
+                    
                     # Create campaign
-                    logger.info(f"Meta Ads: Step 1/4 - Creating campaign...")
+                    logger.info(f"Meta Ads: Step 1/4 - Creating campaign (Mapped objective: {meta_objective})...")
                     campaign_result = await meta_service.create_campaign(
                         name=campaign.name,
-                        objective=plan.get("objective", "LINK_CLICKS"),
+                        objective=meta_objective,
                         daily_budget=float(campaign.budget_allocation.get(channel, 0)),
                         status="PAUSED"  # Start paused, user can activate later
                     )

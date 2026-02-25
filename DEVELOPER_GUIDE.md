@@ -86,38 +86,41 @@ External Services:
 ## Technology Stack
 
 ### Backend
-| Component | Technology | Version |
-|-----------|------------|---------|
-| Framework | FastAPI | ≥0.109.0 |
-| Server | Uvicorn | ≥0.24.0 |
-| Database | PostgreSQL | 15 |
-| ORM | SQLAlchemy | 2.0.23 |
-| Migrations | Alembic | 1.12.1 |
-| Task Queue | Celery | 5.3.4 |
-| Cache/Broker | Redis | 7.x |
-| Auth | python-jose (JWT) | 3.3.0 |
+
+| Component    | Technology        | Version  |
+| ------------ | ----------------- | -------- |
+| Framework    | FastAPI           | ≥0.109.0 |
+| Server       | Uvicorn           | ≥0.24.0  |
+| Database     | PostgreSQL        | 15       |
+| ORM          | SQLAlchemy        | 2.0.23   |
+| Migrations   | Alembic           | 1.12.1   |
+| Task Queue   | Celery            | 5.3.4    |
+| Cache/Broker | Redis             | 7.x      |
+| Auth         | python-jose (JWT) | 3.3.0    |
 
 ### Frontend
-| Component | Technology | Version |
-|-----------|------------|---------|
-| Framework | Next.js | 15.5.9 |
-| React | React | 19.2.0 |
-| Styling | TailwindCSS | 4.x |
-| UI Components | Radix UI | Latest |
-| Forms | React Hook Form + Zod | Latest |
-| Charts | Recharts | 2.15.4 |
+
+| Component     | Technology            | Version |
+| ------------- | --------------------- | ------- |
+| Framework     | Next.js               | 15.5.9  |
+| React         | React                 | 19.2.0  |
+| Styling       | TailwindCSS           | 4.x     |
+| UI Components | Radix UI              | Latest  |
+| Forms         | React Hook Form + Zod | Latest  |
+| Charts        | Recharts              | 2.15.4  |
 
 ### External Services
-| Service | Purpose |
-|---------|---------|
-| **Pinecone** | Vector database for RAG embeddings |
-| **Cloudinary** | Media storage (images, videos) |
+
+| Service                | Purpose                              |
+| ---------------------- | ------------------------------------ |
+| **Pinecone**           | Vector database for RAG embeddings   |
+| **Cloudinary**         | Media storage (images, videos)       |
 | **Google AI (Gemini)** | Content, image, and video generation |
-| **OpenAI** | Alternative LLM provider |
-| **Anthropic Claude** | Alternative LLM provider |
-| **Stripe** | Payment processing |
-| **SerpAPI** | SEO keyword research |
-| **Gmail SMTP** | Email notifications |
+| **OpenAI**             | Alternative LLM provider             |
+| **Anthropic Claude**   | Alternative LLM provider             |
+| **Stripe**             | Payment processing                   |
+| **SerpAPI**            | SEO keyword research                 |
+| **Gmail SMTP**         | Email notifications                  |
 
 ---
 
@@ -230,19 +233,19 @@ buzz/
 
 ### Core Models
 
-| Model | Table | Description |
-|-------|-------|-------------|
-| `User` | `users` | User accounts with email/password |
-| `Tenant` | `tenants` | Organizations/companies (multi-tenant) |
-| `Assistant` | `assistants` | AI assistants per tenant |
-| `SocialIntegration` | `social_integrations` | Connected social accounts |
-| `Content` | `contents` | Generated social content |
-| `ScheduledPost` | `scheduled_posts` | Scheduled content posts |
-| `Document` | `documents` | Uploaded RAG documents |
-| `Campaign` | `campaigns` | Ad campaigns |
-| `BrandAsset` | `brand_assets` | Logos, images for AI reference |
-| `Conversation` | `conversations` | Chat history |
-| `AgentExecution` | `agent_executions` | Task execution logs |
+| Model               | Table                 | Description                            |
+| ------------------- | --------------------- | -------------------------------------- |
+| `User`              | `users`               | User accounts with email/password      |
+| `Tenant`            | `tenants`             | Organizations/companies (multi-tenant) |
+| `Assistant`         | `assistants`          | AI assistants per tenant               |
+| `SocialIntegration` | `social_integrations` | Connected social accounts              |
+| `Content`           | `contents`            | Generated social content               |
+| `ScheduledPost`     | `scheduled_posts`     | Scheduled content posts                |
+| `Document`          | `documents`           | Uploaded RAG documents                 |
+| `Campaign`          | `campaigns`           | Ad campaigns                           |
+| `BrandAsset`        | `brand_assets`        | Logos, images for AI reference         |
+| `Conversation`      | `conversations`       | Chat history                           |
+| `AgentExecution`    | `agent_executions`    | Task execution logs                    |
 
 ### Key Relationships
 
@@ -358,39 +361,43 @@ await email_service.send_password_reset_email(email, reset_link)
 ## API Endpoints
 
 ### Authentication (`/api/v1/auth`)
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/signup` | Register new user |
-| POST | `/login` | Login, get JWT token |
-| POST | `/verify-email` | Verify OTP code |
-| POST | `/resend-verification` | Resend OTP |
-| POST | `/forgot-password` | Request password reset |
-| POST | `/reset-password` | Reset with token |
-| GET | `/me` | Get current user |
+
+| Method | Endpoint               | Description            |
+| ------ | ---------------------- | ---------------------- |
+| POST   | `/signup`              | Register new user      |
+| POST   | `/login`               | Login, get JWT token   |
+| POST   | `/verify-email`        | Verify OTP code        |
+| POST   | `/resend-verification` | Resend OTP             |
+| POST   | `/forgot-password`     | Request password reset |
+| POST   | `/reset-password`      | Reset with token       |
+| GET    | `/me`                  | Get current user       |
 
 ### Integrations (`/api/v1/integrations`)
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/status` | Get all platform connection status |
-| GET | `/oauth/{platform}/init` | Start OAuth flow |
-| GET | `/oauth/{platform}/callback` | OAuth callback |
-| DELETE | `/{id}` | Disconnect integration |
-| PUT | `/{id}/default-page` | Set default page/org |
+
+| Method | Endpoint                     | Description                        |
+| ------ | ---------------------------- | ---------------------------------- |
+| GET    | `/status`                    | Get all platform connection status |
+| GET    | `/oauth/{platform}/init`     | Start OAuth flow                   |
+| GET    | `/oauth/{platform}/callback` | OAuth callback                     |
+| DELETE | `/{id}`                      | Disconnect integration             |
+| PUT    | `/{id}/default-page`         | Set default page/org               |
 
 ### Content (`/api/v1/content`)
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/create` | Start content creation task |
-| GET | `/executions/{id}` | Get execution status |
-| GET | `/scheduled` | Get scheduled posts |
-| POST | `/schedule` | Schedule a post |
+
+| Method | Endpoint           | Description                 |
+| ------ | ------------------ | --------------------------- |
+| POST   | `/create`          | Start content creation task |
+| GET    | `/executions/{id}` | Get execution status        |
+| GET    | `/scheduled`       | Get scheduled posts         |
+| POST   | `/schedule`        | Schedule a post             |
 
 ### Documents (`/api/v1/documents`)
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/upload` | Upload document for RAG |
-| GET | `/` | List documents |
-| DELETE | `/{id}` | Delete document |
+
+| Method | Endpoint  | Description             |
+| ------ | --------- | ----------------------- |
+| POST   | `/upload` | Upload document for RAG |
+| GET    | `/`       | List documents          |
+| DELETE | `/{id}`   | Delete document         |
 
 ---
 
@@ -417,12 +424,12 @@ celery_app.conf.task_routes = {
 
 ### Key Tasks
 
-| Task | Module | Description |
-|------|--------|-------------|
+| Task                             | Module                | Description                      |
+| -------------------------------- | --------------------- | -------------------------------- |
 | `process_content_creation_batch` | `content_creation.py` | Generate content + images/videos |
-| `publish_scheduled_post` | `scheduled_posts.py` | Publish at scheduled time |
-| `process_document_ingestion` | `ingestion.py` | Process uploaded docs for RAG |
-| `send_email_task` | `notifications.py` | Send emails async |
+| `publish_scheduled_post`         | `scheduled_posts.py`  | Publish at scheduled time        |
+| `process_document_ingestion`     | `ingestion.py`        | Process uploaded docs for RAG    |
+| `send_email_task`                | `notifications.py`    | Send emails async                |
 
 ### Content Creation Flow
 
@@ -449,7 +456,7 @@ celery_app.conf.task_routes = {
 GOOGLE_MODEL_CONTENT = "gemini-2.5-flash"        # Text generation
 GOOGLE_MODEL_IMAGE = "gemini-2.5-flash-image"    # Image generation
 GOOGLE_MODEL_VIDEO = "veo-3.1-generate-preview"  # Video generation
-GOOGLE_EMBEDDING_MODEL = "text-embedding-004"    # Embeddings
+GOOGLE_EMBEDDING_MODEL = "gemini-embedding-001"    # Embeddings
 ```
 
 ### Image Generation with Brand Context
@@ -484,7 +491,7 @@ PINECONE_HOST=your-index-host.pinecone.io
 PINECONE_INDEX_NAME=staffpilot
 
 # Index configuration
-EMBEDDING_DIMENSION = 768  # text-embedding-004
+EMBEDDING_DIMENSION = 768  # gemini-embedding-001
 METRIC = "cosine"
 ```
 
@@ -560,6 +567,7 @@ Authorization: Bearer <token>
 ### Multi-Tenancy
 
 Every request includes `tenant_id`:
+
 - Extracted from JWT token
 - Used to filter all database queries
 - Ensures data isolation
@@ -597,6 +605,7 @@ cloudinary://{cloud_name}/
 ### Railway (Backend)
 
 **Services deployed:**
+
 1. **FastAPI Backend** - Main API server
 2. **Celery Worker** - Background task processor
 3. **Celery Beat** - Scheduled task scheduler
@@ -604,12 +613,13 @@ cloudinary://{cloud_name}/
 5. **Redis** - Cache + Celery broker (Railway managed)
 
 **Deployment settings:**
+
 ```yaml
 # Build command
 pip install -r requirements.txt
 
 # Start commands
-# Backend: 
+# Backend:
 uvicorn main:app --host 0.0.0.0 --port $PORT
 
 # Celery Worker:
@@ -620,6 +630,7 @@ celery -A app.workers beat --loglevel=info
 ```
 
 **Environment Variables on Railway:**
+
 - Copy all from `.env` file
 - Update DATABASE_URL to Railway PostgreSQL URL
 - Update REDIS_URL to Railway Redis URL
@@ -628,16 +639,16 @@ celery -A app.workers beat --loglevel=info
 ### Vercel (Frontend)
 
 **Settings:**
+
 ```json
 // vercel.json
 {
-  "rewrites": [
-    { "source": "/(.*)", "destination": "/" }
-  ]
+  "rewrites": [{ "source": "/(.*)", "destination": "/" }]
 }
 ```
 
 **Environment Variables:**
+
 ```
 NEXT_PUBLIC_API_URL=https://your-railway-backend.railway.app
 ```
@@ -719,25 +730,25 @@ This starts: PostgreSQL, Redis, Backend, Celery Worker, Celery Beat
 
 ### Required Variables
 
-| Variable | Description |
-|----------|-------------|
-| `DATABASE_URL` | PostgreSQL connection string |
-| `REDIS_URL` | Redis connection string |
-| `SECRET_KEY` | JWT secret (generate with `openssl rand -hex 32`) |
-| `GOOGLE_API_KEY` | Gemini API key |
-| `PINECONE_API_KEY` | Pinecone vector DB key |
-| `PINECONE_HOST` | Pinecone index host URL |
-| `CLOUDINARY_*` | Cloudinary credentials |
+| Variable           | Description                                       |
+| ------------------ | ------------------------------------------------- |
+| `DATABASE_URL`     | PostgreSQL connection string                      |
+| `REDIS_URL`        | Redis connection string                           |
+| `SECRET_KEY`       | JWT secret (generate with `openssl rand -hex 32`) |
+| `GOOGLE_API_KEY`   | Gemini API key                                    |
+| `PINECONE_API_KEY` | Pinecone vector DB key                            |
+| `PINECONE_HOST`    | Pinecone index host URL                           |
+| `CLOUDINARY_*`     | Cloudinary credentials                            |
 
 ### Social OAuth Variables
 
-| Variable | Description |
-|----------|-------------|
-| `FACEBOOK_APP_ID/SECRET` | Facebook OAuth app |
-| `INSTAGRAM_APP_ID/SECRET` | Instagram (same as Facebook) |
-| `LINKEDIN_CLIENT_ID/SECRET` | LinkedIn OAuth app |
-| `TWITTER_CLIENT_ID/SECRET` | Twitter OAuth 2.0 app |
-| `TIKTOK_CLIENT_ID/SECRET` | TikTok OAuth app |
+| Variable                    | Description                  |
+| --------------------------- | ---------------------------- |
+| `FACEBOOK_APP_ID/SECRET`    | Facebook OAuth app           |
+| `INSTAGRAM_APP_ID/SECRET`   | Instagram (same as Facebook) |
+| `LINKEDIN_CLIENT_ID/SECRET` | LinkedIn OAuth app           |
+| `TWITTER_CLIENT_ID/SECRET`  | Twitter OAuth 2.0 app        |
+| `TIKTOK_CLIENT_ID/SECRET`   | TikTok OAuth app             |
 
 ### Full list: See `backend/ENV_SETUP.md`
 
@@ -796,13 +807,13 @@ celery -A app.workers purge
 
 ### Common Issues
 
-| Issue | Solution |
-|-------|----------|
-| "Redis connection refused" | Start Redis or check REDIS_URL |
-| "Database connection failed" | Check DATABASE_URL, run migrations |
-| "OAuth callback failed" | Check redirect URIs match in app settings |
-| "Image generation failed" | Verify GOOGLE_API_KEY has imagen access |
-| "Pinecone error" | Check PINECONE_HOST is the full host URL |
+| Issue                        | Solution                                  |
+| ---------------------------- | ----------------------------------------- |
+| "Redis connection refused"   | Start Redis or check REDIS_URL            |
+| "Database connection failed" | Check DATABASE_URL, run migrations        |
+| "OAuth callback failed"      | Check redirect URIs match in app settings |
+| "Image generation failed"    | Verify GOOGLE_API_KEY has imagen access   |
+| "Pinecone error"             | Check PINECONE_HOST is the full host URL  |
 
 ### Logs
 
@@ -827,4 +838,4 @@ celery -A app.workers purge
 
 ---
 
-*Last updated: January 2026*
+_Last updated: January 2026_
